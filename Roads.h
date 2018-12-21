@@ -7,7 +7,8 @@
 
 #include <vector>
 #include <string>
-#include <unordered_map>
+// using boost unordered_map to support C++98 used in GeoDa
+#include <boost/unordered_map.hpp>
 
 namespace OSMTools {
     enum RoadType {drive, walk};
@@ -35,18 +36,19 @@ namespace OSMTools {
 
         void SaveOSMToShapefile(const char* file_name);
 
+        std::string GetValueFromLine(std::string line, bool quoted=true);
 
     protected:
         std::string base_url;
-
-        std::unordered_map<std::string, int> id_map;
+        // properties for nodes
+        boost::unordered_map<std::string, int> id_map;
         std::vector<double> lat_arr;
         std::vector<double> lon_arr;
         std::vector<std::string> speed_arr;
-
-        std::unordered_map<std::string, int> edge_map;
-        std::vector<std::string> highway_arr;
-        std::unordered_map<std::string, std::vector<std::string> > edges;
+        // properties for edges
+        std::vector<std::string> edge_arr;
+        std::vector<std::vector<std::string> > edges;
+        std::vector<std::vector<std::string> > edge_properties;
     };
 }
 

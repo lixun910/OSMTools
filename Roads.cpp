@@ -94,6 +94,28 @@ bool Roads::DownloadByBoundingBox(double lat_min, double lng_min,
     return flag;
 }
 
+std::string Roads::GetValueFromLine(std::string line, bool quoted)
+{
+    // example:  "id": 237667011,
+    // example:  "name": "King Drive & 25th Street",
+    if (line.empty()) return "";
+
+    size_t start = line.find(":");
+    if (start == std::string::npos) return "";
+
+    size_t end = line.length() - 2; // ending comma
+    std::string tmp = line.substr(start + 1, end - start);
+
+    if (quoted) {
+        start = tmp.find("\"");
+        if (start != std::string::npos) {
+            end = tmp.length() - 2; // right-quote
+            tmp = tmp.substr(start + 1, end - start);
+        }
+    }
+    return tmp;
+}
+
 void Roads::ReadOSMNodes(const char *file_name)
 {
     if (file_name == 0) return;
@@ -107,93 +129,109 @@ void Roads::ReadOSMNodes(const char *file_name)
     std::ifstream infile(file_name);
     std::string line, tmp, tmp_edge;
     std::vector<std::string> tmp_edge_nodes;
-    while (std::getline(infile, line))
-    {
+    std::vector<std::string> tmp_edge_property;
+
+    while (std::getline(infile, line)) {
         if (line.find("node") != std::string::npos &&
             line.find("type") != std::string::npos) {
             state = 1;
+            continue;
         } else if (line.find("way") != std::string::npos &&
                    line.find("type") != std::string::npos) {
             state = 5;
+            continue;
         }
 
         if (state == 1) {
             // when node is found previously
             if (line.find("id") != std::string::npos) {
-                start = line.find(":") + 1;
-                end = line.length() - 1; // comma
-                tmp = line.substr(start, end - start);
-                trim(tmp);
-                id_map[tmp] = cnt++;
-                state = 2;
+                tmp = GetValueFromLine(line, false);
+                if (!tmp.empty()) {
+                    trim(tmp);
+                    id_map[tmp] = cnt++;
+
+                    state = 2;
+                }
             }
         } else if (state == 2) {
             // when id is found
             if (line.find("lat") != std::string::npos) {
-                start = line.find(":") + 1;
-                end = line.length() - 1;
-                tmp = line.substr(start, end -start);
-                lat_arr.push_back(std::stod(tmp));
-                state = 3;
+                tmp = GetValueFromLine(line, false);
+                if (!tmp.empty()) {
+                    lat_arr.push_back(std::stod(tmp));
+                    state = 3;
+                }
             }
         } else if (state == 3) {
             // when lat is found
             if (line.find("lon") != std::string::npos) {
-                start = line.find(":") + 1;
-                end = line.length() - 1;
-                tmp = line.substr(start, end-start);
-                lon_arr.push_back(std::stod(tmp));
-                state = 4;
+                tmp = GetValueFromLine(line, false);
+                if (!tmp.empty()) {
+                    lon_arr.push_back(std::stod(tmp));
+                    state = 4;
+                }
             }
         } else if (state == 4) {
             if (line.find("maxspeed") != std::string::npos) {
-                start = line.find(":") + 1;
-                end = line.length() - 1;
-                tmp = line.substr(start, end);
-                start = tmp.find("\"") + 1;
-                end = tmp.length() - 2;
-                tmp = tmp.substr(start, end);
+                tmp = GetValueFromLine(line);
                 speed_arr.push_back(tmp);
                 state = 0;
             }
         } else if (state == 5) {
-            // way
+            // way id
             if (line.find("id") != std::string::npos) {
-                start = line.find(":") + 1;
-                end = line.length() - 1; // comma
-                tmp_edge = line.substr(start, end - start);
-                edge_map[tmp_edge] = edge_cnt++;
-                tmp_edge_nodes.clear();
-                state = 6;
+                tmp_edge = GetValueFromLine(line);
+                if (!tmp_edge.empty()) {
+                    edge_arr.push_back(tmp_edge);
+                    if (tmp_edge_property.empty() == false) {
+                        edge_properties.push_back(tmp_edge_property);
+                    }
+                    tmp_edge_nodes.clear();
+                    tmp_edge_property.clear();
+                    tmp_edge_property.resize(5);
+                    state = 6;
+                }
             }
         } else if (state == 6) {
             if (line.find("nodes") != std::string::npos) {
+                // start parsing nodes
                 state = 7;
+                continue;
             }
         } else if (state == 7) {
             if (line.find("]") != std::string::npos) {
-                edges[tmp_edge] = tmp_edge_nodes;
+                // end parsing nodes
+                edges.push_back(tmp_edge_nodes);
                 state = 8;
-            } else {
-                tmp = line.substr(0, line.length()-2);
+                continue;
+            } else if (line.empty()==false){
+                tmp = line.substr(0, line.length()-2); // ending comma
                 trim(tmp);
                 tmp_edge_nodes.push_back(tmp);
             }
         } else if (state == 8) {
             if (line.find("highway") != std::string::npos) {
-                start = line.find(":") + 1;
-                end = line.length() - 1;
-                tmp = line.substr(start, end);
-                start = tmp.find("\"") + 1;
-                end = tmp.length() - 2;
-                tmp = tmp.substr(start, end);
-                highway_arr.push_back(tmp);
-                state = 0;
+                tmp = GetValueFromLine(line);
+                tmp_edge_property[0] = tmp;
+            } else if (line.find("name") != std::string::npos) {
+                tmp = GetValueFromLine(line);
+                tmp_edge_property[1] = tmp;
+            } else if (line.find("county") != std::string::npos) {
+                tmp = GetValueFromLine(line);
+                tmp_edge_property[2] = tmp;
+            } else if (line.find("oneway") != std::string::npos) {
+                tmp = GetValueFromLine(line);
+                tmp_edge_property[3] = tmp;
+            } else if (line.find("maxspeed") != std::string::npos) {
+                tmp = GetValueFromLine(line);
+                tmp_edge_property[4] = tmp;
             }
         }
     }
+    // record last edge property
+    edge_properties.push_back(tmp_edge_property);
 
-    printf( "%d\n", id_map.size());
+    printf( "%d == %d\n", edges.size(), edge_properties.size());
 }
 
 void Roads::SaveOSMToShapefile(const char *file_name)
@@ -223,7 +261,7 @@ void Roads::SaveOSMToShapefile(const char *file_name)
         GDALClose( poDS );
         return;
     }
-    // osmid, name, highway, oneway, cfcc, county, length, , type
+    // osmid, name, highway, oneway, county, length,
     OGRFieldDefn oField( "Name", OFTString );
     oField.SetWidth(32);
     if( poLayer->CreateField( &oField ) != OGRERR_NONE ) {
