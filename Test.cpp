@@ -21,6 +21,7 @@ int main(void)
     //roads.DownloadByBoundingBox(lat_min, lng_min, lat_max, lng_max,
     //        OSMTools::drive,
     //        "/Users/xun/Desktop/drive.json");
-    roads.ReadOSMNodes("/Users/xun/Desktop/drive1.json");
+    roads.ReadOSMNodes("/Users/xun/Dropbox/drive1.json");
+    roads.SaveOSMToShapefile("/Users/xun/Dropbox/drive1.json");
     return 0;
 }

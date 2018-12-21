@@ -31,12 +31,14 @@ namespace OSMTools {
         //bool DownloadByRadius();
         void ReadOSMNodes(const char* file_name);
 
+        void SaveOSMToShapefile(const char* file_name);
+
     protected:
         std::string GetOSMFilter(RoadType road_type);
 
-        void SaveOSMToShapefile(const char* file_name);
-
         std::string GetValueFromLine(std::string line, bool quoted=true);
+
+        double ComputeArcDist(double lat1, double lon1, double lat2, double lon2);
 
     protected:
         std::string base_url;
@@ -48,6 +50,7 @@ namespace OSMTools {
         // properties for edges
         std::vector<std::string> edge_arr;
         std::vector<std::vector<std::string> > edges;
+        // highway, name, county, oneway, maxspeed
         std::vector<std::vector<std::string> > edge_properties;
     };
 }

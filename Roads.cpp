@@ -11,6 +11,12 @@
 #include "Downloader.h"
 #include "Roads.h"
 
+#ifndef PI
+#define PI 3.141592653589793238463
+#endif
+
+#define PI_OVER_180 0.017453292519943
+
 using namespace OSMTools;
 
 // trim from start (in place)
@@ -68,10 +74,30 @@ std::string Roads::GetOSMFilter(RoadType road_type)
     }
     return "";
 }
+
+double Roads::ComputeArcDist(double lat1, double lon1, double lat2, double lon2)
+{
+    // degree to rad
+    lat1 = lat1 * PI_OVER_180;
+    lon1 = lon1 * PI_OVER_180;
+    lat2 = lat2 * PI_OVER_180;
+    lon2 = lon2 * PI_OVER_180;
+
+    // this is the haversine formula which is particularly well-conditioned
+    double d_lat_ovr_2 = (lat2-lat1)/2.0;
+    double sin_sq_d_lat_ovr_2 = sin(d_lat_ovr_2);
+    sin_sq_d_lat_ovr_2 *= sin_sq_d_lat_ovr_2;
+    double d_lon_ovr_2 = (lon2-lon1)/2.0;
+    double sin_sq_d_lon_ovr_2 = sin(d_lon_ovr_2);
+    sin_sq_d_lon_ovr_2 *= sin_sq_d_lon_ovr_2;
+
+    double a = sin_sq_d_lat_ovr_2 + cos(lat1)*cos(lat2) * sin_sq_d_lon_ovr_2;
+    return 2.0* atan2(sqrt(a),sqrt(1.0-a));
+}
+
 bool Roads::DownloadByBoundingBox(double lat_min, double lng_min,
         double lat_max, double lng_max,
-        OSMTools::RoadType road_type,
-        const char *file_name)
+        OSMTools::RoadType road_type,  const char *file_name)
 {
     bool flag = false;
 
@@ -103,7 +129,10 @@ std::string Roads::GetValueFromLine(std::string line, bool quoted)
     size_t start = line.find(":");
     if (start == std::string::npos) return "";
 
-    size_t end = line.length() - 2; // ending comma
+    size_t end = line.length() - 1;
+    if (line.find(",") != std::string::npos) {
+        end = end - 1; // ending with comma
+    }
     std::string tmp = line.substr(start + 1, end - start);
 
     if (quoted) {
@@ -205,7 +234,9 @@ void Roads::ReadOSMNodes(const char *file_name)
                 state = 8;
                 continue;
             } else if (line.empty()==false){
-                tmp = line.substr(0, line.length()-2); // ending comma
+                if (line.find(",") != std::string::npos) {
+                    tmp = line.substr(0, line.length()-1); // ending comma
+                }
                 trim(tmp);
                 tmp_edge_nodes.push_back(tmp);
             }
@@ -237,8 +268,8 @@ void Roads::ReadOSMNodes(const char *file_name)
 void Roads::SaveOSMToShapefile(const char *file_name)
 {
     std::string shp_file_name = file_name;
-    shp_file_name = shp_file_name.substr(0, shp_file_name.size() - 3);
-    shp_file_name = shp_file_name + "shp";
+    shp_file_name = shp_file_name.substr(0, shp_file_name.rfind("."));
+    shp_file_name = shp_file_name + ".shp";
 
     const char *pszDriverName = "ESRI Shapefile";
     GDALDriver *poDriver;
@@ -261,26 +292,49 @@ void Roads::SaveOSMToShapefile(const char *file_name)
         GDALClose( poDS );
         return;
     }
-    // osmid, name, highway, oneway, county, length,
-    OGRFieldDefn oField( "Name", OFTString );
-    oField.SetWidth(32);
+    // wayid, highway, name, county, oneway, maxspeed, length,
+    const char* prop_names[255] = {"wayid", "highway", "name", "county", "oneway", "maxspeed"};
+    for (size_t i=0; i<6; ++i) {
+        OGRFieldDefn oField(prop_names[i], OFTString );
+        oField.SetWidth(32);
+        if( poLayer->CreateField( &oField ) != OGRERR_NONE ) {
+            printf( "Creating Name field failed.\n" );
+            GDALClose( poDS );
+            return;
+        }
+    }
+    OGRFieldDefn oField("Length", OFTReal);
+    //oField.SetWidth(32);
     if( poLayer->CreateField( &oField ) != OGRERR_NONE ) {
         printf( "Creating Name field failed.\n" );
         GDALClose( poDS );
         return;
     }
-    double x, y;
-    char szName[33];
-    while( !feof(stdin)
-           && fscanf( stdin, "%lf,%lf,%32s", &x, &y, szName ) == 3 )
-    {
+    for (size_t i=0; i<edges.size(); ++i) {
         OGRFeature *poFeature;
         poFeature = OGRFeature::CreateFeature( poLayer->GetLayerDefn() );
-        poFeature->SetField( "Name", szName );
-        OGRPoint pt;
-        pt.setX( x );
-        pt.setY( y );
-        poFeature->SetGeometry( &pt );
+        for (size_t c=0; c<5; ++c) {
+            if (c == 0) {
+                poFeature->SetField(prop_names[c], edge_arr[i].c_str());
+            } else {
+                const char *val = edge_properties[i][c-1].c_str();
+                poFeature->SetField(prop_names[c], val);
+            }
+        }
+        OGRLineString line;
+        size_t n_nodes = edges[i].size();
+        line.setNumPoints(n_nodes);
+        for (size_t node_i=0; node_i < n_nodes; ++node_i) {
+            std::string node_id = edges[i][node_i];
+            int node_idx = id_map[node_id];
+            if (node_idx >= 0 ) {
+                OGRPoint pt;
+                pt.setX(lon_arr[node_idx]);
+                pt.setY(lat_arr[node_idx]);
+                line.setPoint(node_i, &pt);
+            }
+        }
+        poFeature->SetGeometry(&line);
         if( poLayer->CreateFeature( poFeature ) != OGRERR_NONE ) {
             printf( "Failed to create feature in shapefile.\n" );
             GDALClose( poDS );
