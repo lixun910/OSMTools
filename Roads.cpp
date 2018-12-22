@@ -5,7 +5,7 @@
 #include <sstream>
 #include <fstream>
 #include <algorithm>
-
+#include <boost/algorithm/string.hpp>
 #include "ogrsf_frmts.h"
 
 #include "Downloader.h"
@@ -16,45 +16,18 @@
 #endif
 
 #define PI_OVER_180 0.017453292519943
+#define EARTH_RADIUS 6372795  // meters
 
 using namespace OSMTools;
 
-// trim from start (in place)
-static inline void ltrim(std::string &s) {
-    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](int ch) {
-        return !std::isspace(ch);
-    }));
-}
-
-// trim from end (in place)
-static inline void rtrim(std::string &s) {
-    s.erase(std::find_if(s.rbegin(), s.rend(), [](int ch) {
-        return !std::isspace(ch);
-    }).base(), s.end());
-}
-
-// trim from both ends (in place)
-static inline void trim(std::string &s) {
-    ltrim(s);
-    rtrim(s);
-}
-
-// trim from start (copying)
-static inline std::string ltrim_copy(std::string s) {
-    ltrim(s);
-    return s;
-}
-
-// trim from end (copying)
-static inline std::string rtrim_copy(std::string s) {
-    rtrim(s);
-    return s;
-}
-
-// trim from both ends (copying)
-static inline std::string trim_copy(std::string s) {
-    trim(s);
-    return s;
+static inline std::string trim(const std::string& str)
+{
+    size_t first = str.find_first_not_of(' ');
+    if (std::string::npos == first) {
+        return str;
+    }
+    size_t last = str.find_last_not_of(' ');
+    return str.substr(first, (last - first + 1));
 }
 
 Roads::Roads()
@@ -68,15 +41,20 @@ Roads::~Roads() {}
 std::string Roads::GetOSMFilter(RoadType road_type)
 {
     if (road_type == OSMTools::drive) {
-        return "way[\"highway\"][\"highway\"!~\"cycleway|footway|path|pedestrian|steps|track|proposed|construction|bridleway|abandoned|platform|raceway|service\"][\"motor_vehicle\"!~\"no\"][\"motorcar\"!~\"no\"][\"service\"!~\"parking|parking_aisle|driveway|emergency_access\"]";
+        return "way[\"highway\"][\"highway\"!~\"cycleway|bus_stop|elevator|footway|path|pedestrian|steps|track|proposed"
+               "|construction|bridleway|abandoned|platform|raceway|service\"][\"motor_vehicle\"!~\"no\"][\"motorcar\"!~\"no\"][\"service\"!~\"parking|parking_aisle|driveway|emergency_access\"]";
     } else if (road_type == OSMTools::walk) {
         return "way[\"highway\"][\"highway\"!~\"motor|proposed|construction|abandoned|platform|raceway\"][\"foot\"!~\"no\"][\"pedestrians\"!~\"no\"]";
     }
     return "";
 }
 
-double Roads::ComputeArcDist(double lat1, double lon1, double lat2, double lon2)
+double Roads::ComputeArcDist(int from, int to)
 {
+    double lat1 = lat_arr[from];
+    double lon1 = lon_arr[from];
+    double lat2 = lat_arr[to];
+    double lon2 = lon_arr[to];
     // degree to rad
     lat1 = lat1 * PI_OVER_180;
     lon1 = lon1 * PI_OVER_180;
@@ -84,15 +62,12 @@ double Roads::ComputeArcDist(double lat1, double lon1, double lat2, double lon2)
     lon2 = lon2 * PI_OVER_180;
 
     // this is the haversine formula which is particularly well-conditioned
-    double d_lat_ovr_2 = (lat2-lat1)/2.0;
-    double sin_sq_d_lat_ovr_2 = sin(d_lat_ovr_2);
-    sin_sq_d_lat_ovr_2 *= sin_sq_d_lat_ovr_2;
-    double d_lon_ovr_2 = (lon2-lon1)/2.0;
-    double sin_sq_d_lon_ovr_2 = sin(d_lon_ovr_2);
-    sin_sq_d_lon_ovr_2 *= sin_sq_d_lon_ovr_2;
+    double dlat = lat2 - lat1;
+    double dlon = lon2 - lon1;
 
-    double a = sin_sq_d_lat_ovr_2 + cos(lat1)*cos(lat2) * sin_sq_d_lon_ovr_2;
-    return 2.0* atan2(sqrt(a),sqrt(1.0-a));
+    double a = pow(sin(dlat/2.0), 2);
+    double b = cos(lat1) * cos(lat2) * pow(sin(dlon/2.0),2);
+    return 2 * EARTH_RADIUS * asin(sqrt(a+b));
 }
 
 bool Roads::DownloadByBoundingBox(double lat_min, double lng_min,
@@ -106,11 +81,11 @@ bool Roads::DownloadByBoundingBox(double lat_min, double lng_min,
 
     std::ostringstream ss;
     ss << base_url << "?";
-    ss << "data=[out:json][timeout:180];area[name=\"Chicago\"];";
+    ss << "data=[out:json][timeout:180];(";
     ss << osm_filter;
-    //ss << "(" << lat_min << "," << lng_min << ",";
-    //ss << lat_max << "," << lng_max << ")";
-    ss << ";out;";
+    ss << "(" << lat_min << "," << lng_min << ",";
+    ss << lat_max << "," << lng_max << ")";
+    ss << ";>;);out;";
 
     std::string url = ss.str();
 
@@ -126,7 +101,7 @@ std::string Roads::GetValueFromLine(std::string line, bool quoted)
     // example:  "name": "King Drive & 25th Street",
     if (line.empty()) return "";
 
-    size_t start = line.find(":");
+    size_t start = line.rfind(":");
     if (start == std::string::npos) return "";
 
     size_t end = line.length() - 1;
@@ -152,13 +127,12 @@ void Roads::ReadOSMNodes(const char *file_name)
     id_map.clear();
     lat_arr.clear();
     lon_arr.clear();
-    speed_arr.clear();
 
-    int state = 0, cnt = 0, edge_cnt = 0, start = 0, end = 0;
+    int state = 0, cnt = 0, way_cnt = 0, start = 0, end = 0;
     std::ifstream infile(file_name);
-    std::string line, tmp, tmp_edge;
-    std::vector<std::string> tmp_edge_nodes;
-    std::vector<std::string> tmp_edge_property;
+    std::string line, tmp, tmp_way;
+    std::vector<std::string> tmp_way_nodes;
+    std::vector<std::string> tmp_way_property;
 
     while (std::getline(infile, line)) {
         if (line.find("node") != std::string::npos &&
@@ -176,7 +150,7 @@ void Roads::ReadOSMNodes(const char *file_name)
             if (line.find("id") != std::string::npos) {
                 tmp = GetValueFromLine(line, false);
                 if (!tmp.empty()) {
-                    trim(tmp);
+                    tmp = trim(tmp);
                     id_map[tmp] = cnt++;
 
                     state = 2;
@@ -200,24 +174,19 @@ void Roads::ReadOSMNodes(const char *file_name)
                     state = 4;
                 }
             }
-        } else if (state == 4) {
-            if (line.find("maxspeed") != std::string::npos) {
-                tmp = GetValueFromLine(line);
-                speed_arr.push_back(tmp);
-                state = 0;
-            }
+
         } else if (state == 5) {
             // way id
             if (line.find("id") != std::string::npos) {
-                tmp_edge = GetValueFromLine(line);
-                if (!tmp_edge.empty()) {
-                    edge_arr.push_back(tmp_edge);
-                    if (tmp_edge_property.empty() == false) {
-                        edge_properties.push_back(tmp_edge_property);
+                tmp_way = GetValueFromLine(line);
+                if (!tmp_way.empty()) {
+                    way_arr.push_back(tmp_way);
+                    if (tmp_way_property.empty() == false) {
+                        way_properties.push_back(tmp_way_property);
                     }
-                    tmp_edge_nodes.clear();
-                    tmp_edge_property.clear();
-                    tmp_edge_property.resize(5);
+                    tmp_way_nodes.clear();
+                    tmp_way_property.clear();
+                    tmp_way_property.resize(5);
                     state = 6;
                 }
             }
@@ -230,42 +199,138 @@ void Roads::ReadOSMNodes(const char *file_name)
         } else if (state == 7) {
             if (line.find("]") != std::string::npos) {
                 // end parsing nodes
-                edges.push_back(tmp_edge_nodes);
+                ways.push_back(tmp_way_nodes);
                 state = 8;
                 continue;
             } else if (line.empty()==false){
+                tmp = line;
                 if (line.find(",") != std::string::npos) {
                     tmp = line.substr(0, line.length()-1); // ending comma
                 }
-                trim(tmp);
-                tmp_edge_nodes.push_back(tmp);
+                tmp = trim(tmp);
+                if (node_cnt_dict.find(tmp) == node_cnt_dict.end()) {
+                    node_cnt_dict[tmp] = 1;
+                } else {
+                    node_cnt_dict[tmp]++;
+                }
+                tmp_way_nodes.push_back(tmp);
             }
         } else if (state == 8) {
             if (line.find("highway") != std::string::npos) {
                 tmp = GetValueFromLine(line);
-                tmp_edge_property[0] = tmp;
-            } else if (line.find("name") != std::string::npos) {
+                tmp_way_property[0] = tmp;
+            } else if (line.find("\"name\"") != std::string::npos) {
                 tmp = GetValueFromLine(line);
-                tmp_edge_property[1] = tmp;
+                tmp_way_property[1] = tmp;
             } else if (line.find("county") != std::string::npos) {
                 tmp = GetValueFromLine(line);
-                tmp_edge_property[2] = tmp;
+                tmp_way_property[2] = tmp;
             } else if (line.find("oneway") != std::string::npos) {
                 tmp = GetValueFromLine(line);
-                tmp_edge_property[3] = tmp;
+                tmp_way_property[3] = tmp;
             } else if (line.find("maxspeed") != std::string::npos) {
                 tmp = GetValueFromLine(line);
-                tmp_edge_property[4] = tmp;
+                tmp_way_property[4] = tmp;
             }
         }
     }
-    // record last edge property
-    edge_properties.push_back(tmp_edge_property);
-
-    printf( "%d == %d\n", edges.size(), edge_properties.size());
+    // record last way property
+    way_properties.push_back(tmp_way_property);
 }
 
-void Roads::SaveOSMToShapefile(const char *file_name)
+void Roads::SaveEdgesToShapefile(const char *file_name)
+{
+    std::string shp_file_name = file_name;
+    shp_file_name = shp_file_name.substr(0, shp_file_name.rfind("."));
+    shp_file_name = shp_file_name + ".shp";
+
+    const char *pszDriverName = "ESRI Shapefile";
+    GDALDriver *poDriver;
+    GDALAllRegister();
+    poDriver = GetGDALDriverManager()->GetDriverByName(pszDriverName );
+    if( poDriver == NULL ) {
+        printf( "%s driver not available.\n", pszDriverName );
+        return;
+    }
+    GDALDataset *poDS;
+    poDS = poDriver->Create(shp_file_name.c_str(), 0, 0, 0, GDT_Unknown, NULL );
+    if( poDS == NULL ) {
+        printf( "Creation of output file failed.\n" );
+        return;
+    }
+    OGRLayer *poLayer;
+    poLayer = poDS->CreateLayer("roads", NULL, wkbLineString, NULL );
+    if( poLayer == NULL ) {
+        printf( "Layer creation failed.\n" );
+        GDALClose( poDS );
+        return;
+    }
+    // wayid, highway, name, county, oneway, maxspeed, length,
+    const char* prop_names[255] = {"wayid", "highway", "name", "county", "oneway", "maxspeed", "from", "to"};
+    for (size_t i=0; i<6; ++i) {
+        OGRFieldDefn oField(prop_names[i], OFTString );
+        oField.SetWidth(32);
+        if( poLayer->CreateField( &oField ) != OGRERR_NONE ) {
+            printf( "Creating Name field failed.\n" );
+            GDALClose( poDS );
+            return;
+        }
+    }
+    OGRFieldDefn oField("dist_m", OFTReal);
+    if( poLayer->CreateField( &oField ) != OGRERR_NONE ) {
+        printf( "Creating Name field failed.\n" );
+        GDALClose( poDS );
+        return;
+    }
+    for (size_t i=0; i<ways.size(); ++i) {
+        std::vector<int> valid_nodes;
+        for (size_t j=0; j<ways[i].size(); ++j) {
+            std::string tmp_id = ways[i][j];
+            if (node_cnt_dict[tmp_id] > 1) {
+                valid_nodes.push_back(id_map[tmp_id]);
+            }
+        }
+        if (valid_nodes.empty()) continue;
+
+        for (size_t j=0; j<valid_nodes.size()-1; ++j) {
+            int from_idx = valid_nodes[j];
+            int to_idx = valid_nodes[j+1];
+            OGRFeature *poFeature;
+            poFeature = OGRFeature::CreateFeature( poLayer->GetLayerDefn() );
+            for (size_t c=0; c<6; ++c) {
+                if (c == 0) {
+                    std::string eid = way_arr[i];
+                    poFeature->SetField(c, eid.c_str());
+                } else {
+                    const char *val = way_properties[i][c-1].c_str();
+                    poFeature->SetField(c, val);
+                }
+            }
+            double dist = ComputeArcDist(from_idx, to_idx);
+            poFeature->SetField(6, dist);
+
+            OGRLineString line;
+            OGRPoint pt1;
+            pt1.setX(lon_arr[from_idx]);
+            pt1.setY(lat_arr[from_idx]);
+            line.addPoint(&pt1);
+            OGRPoint pt2;
+            pt2.setX(lon_arr[to_idx]);
+            pt2.setY(lat_arr[to_idx]);
+            line.addPoint(&pt2);
+            poFeature->SetGeometry(&line);
+            if( poLayer->CreateFeature( poFeature ) != OGRERR_NONE ) {
+                printf( "Failed to create feature in shapefile.\n" );
+                GDALClose( poDS );
+                return;
+            }
+            OGRFeature::DestroyFeature( poFeature );
+        }
+    }
+    GDALClose( poDS );
+}
+
+void Roads::SaveToShapefile(const char *file_name)
 {
     std::string shp_file_name = file_name;
     shp_file_name = shp_file_name.substr(0, shp_file_name.rfind("."));
@@ -304,36 +369,101 @@ void Roads::SaveOSMToShapefile(const char *file_name)
         }
     }
     OGRFieldDefn oField("Length", OFTReal);
-    //oField.SetWidth(32);
     if( poLayer->CreateField( &oField ) != OGRERR_NONE ) {
         printf( "Creating Name field failed.\n" );
         GDALClose( poDS );
         return;
     }
-    for (size_t i=0; i<edges.size(); ++i) {
+    for (size_t i=0; i<ways.size(); ++i) {
         OGRFeature *poFeature;
         poFeature = OGRFeature::CreateFeature( poLayer->GetLayerDefn() );
-        for (size_t c=0; c<5; ++c) {
+        for (size_t c=0; c<6; ++c) {
             if (c == 0) {
-                poFeature->SetField(prop_names[c], edge_arr[i].c_str());
+                std::string eid = way_arr[i];
+                poFeature->SetField(c, eid.c_str());
             } else {
-                const char *val = edge_properties[i][c-1].c_str();
-                poFeature->SetField(prop_names[c], val);
+                const char *val = way_properties[i][c-1].c_str();
+                poFeature->SetField(c, val);
             }
         }
         OGRLineString line;
-        size_t n_nodes = edges[i].size();
-        line.setNumPoints(n_nodes);
-        for (size_t node_i=0; node_i < n_nodes; ++node_i) {
-            std::string node_id = edges[i][node_i];
-            int node_idx = id_map[node_id];
-            if (node_idx >= 0 ) {
+
+        for (size_t j=0; j<ways[i].size(); ++j) {
+            std::string node_id = ways[i][j];
+            if (id_map.find(node_id) != id_map.end()) {
+                int idx = id_map[node_id];
                 OGRPoint pt;
-                pt.setX(lon_arr[node_idx]);
-                pt.setY(lat_arr[node_idx]);
-                line.setPoint(node_i, &pt);
+                pt.setX(lon_arr[idx]);
+                pt.setY(lat_arr[idx]);
+                line.addPoint(&pt);
             }
         }
+        poFeature->SetGeometry(&line);
+        if( poLayer->CreateFeature( poFeature ) != OGRERR_NONE ) {
+            printf( "Failed to create feature in shapefile.\n" );
+            GDALClose( poDS );
+            return;
+        }
+        OGRFeature::DestroyFeature( poFeature );
+    }
+    GDALClose( poDS );
+}
+
+void Roads::SaveCSVToShapefile(const char *file_name)
+{
+    std::string shp_file_name = file_name;
+    shp_file_name = shp_file_name.substr(0, shp_file_name.rfind("."));
+    shp_file_name = shp_file_name + ".shp";
+
+    const char *pszDriverName = "ESRI Shapefile";
+    GDALDriver *poDriver;
+    GDALAllRegister();
+    poDriver = GetGDALDriverManager()->GetDriverByName(pszDriverName );
+    if( poDriver == NULL ) {
+        printf( "%s driver not available.\n", pszDriverName );
+        return;
+    }
+    GDALDataset *poDS;
+    poDS = poDriver->Create(shp_file_name.c_str(), 0, 0, 0, GDT_Unknown, NULL );
+    if( poDS == NULL ) {
+        printf( "Creation of output file failed.\n" );
+        return;
+    }
+    OGRLayer *poLayer;
+    poLayer = poDS->CreateLayer("roads", NULL, wkbLineString, NULL );
+    if( poLayer == NULL ) {
+        printf( "Layer creation failed.\n" );
+        GDALClose( poDS );
+        return;
+    }
+
+    std::string line;
+    std::ifstream infile(file_name);
+    std::string delimeter = ",";
+    while (std::getline(infile, line)) {
+        std::vector<std::string> vec;
+        boost::algorithm::split(vec, line, boost::is_any_of(delimeter));
+
+        OGRFeature *poFeature;
+        poFeature = OGRFeature::CreateFeature( poLayer->GetLayerDefn() );
+        OGRLineString line;
+
+        std::string node1 = vec[0];
+        std::string node2 = vec[1];
+
+        size_t node1_idx = id_map[node1];
+        size_t node2_idx = id_map[node2];
+
+        OGRPoint pt1;
+        pt1.setX(lon_arr[node1_idx]);
+        pt1.setY(lat_arr[node1_idx]);
+        line.addPoint(&pt1);
+
+        OGRPoint pt2;
+        pt2.setX(lon_arr[node2_idx]);
+        pt2.setY(lat_arr[node2_idx]);
+        line.addPoint(&pt2);
+
         poFeature->SetGeometry(&line);
         if( poLayer->CreateFeature( poFeature ) != OGRERR_NONE ) {
             printf( "Failed to create feature in shapefile.\n" );

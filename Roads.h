@@ -31,14 +31,18 @@ namespace OSMTools {
         //bool DownloadByRadius();
         void ReadOSMNodes(const char* file_name);
 
-        void SaveOSMToShapefile(const char* file_name);
+        void SaveToShapefile(const char* file_name);
+
+        void SaveEdgesToShapefile(const char* file_name);
+
+        void SaveCSVToShapefile(const char* file_name);
 
     protected:
         std::string GetOSMFilter(RoadType road_type);
 
         std::string GetValueFromLine(std::string line, bool quoted=true);
 
-        double ComputeArcDist(double lat1, double lon1, double lat2, double lon2);
+        double ComputeArcDist(int from, int to);
 
     protected:
         std::string base_url;
@@ -46,12 +50,13 @@ namespace OSMTools {
         boost::unordered_map<std::string, int> id_map;
         std::vector<double> lat_arr;
         std::vector<double> lon_arr;
-        std::vector<std::string> speed_arr;
+        //std::vector<std::string> speed_arr;
         // properties for edges
-        std::vector<std::string> edge_arr;
-        std::vector<std::vector<std::string> > edges;
+        std::vector<std::string> way_arr;
+        boost::unordered_map<std::string, int> node_cnt_dict;
+        std::vector<std::vector<std::string> > ways;
         // highway, name, county, oneway, maxspeed
-        std::vector<std::vector<std::string> > edge_properties;
+        std::vector<std::vector<std::string> > way_properties;
     };
 }
 

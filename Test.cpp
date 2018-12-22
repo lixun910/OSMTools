@@ -20,8 +20,9 @@ int main(void)
     OSMTools::Roads roads;
     //roads.DownloadByBoundingBox(lat_min, lng_min, lat_max, lng_max,
     //        OSMTools::drive,
-    //        "/Users/xun/Desktop/drive.json");
-    roads.ReadOSMNodes("/Users/xun/Dropbox/drive1.json");
-    roads.SaveOSMToShapefile("/Users/xun/Dropbox/drive1.json");
+    //        "/Users/xun/Dropbox/drive.json");
+    roads.ReadOSMNodes("/Users/xun/Desktop/data.json");
+    roads.SaveEdgesToShapefile("/Users/xun/Desktop/data.json");
+    //roads.SaveCSVToShapefile("/Users/xun/Downloads/road/bld/_edges.csv");
     return 0;
 }
