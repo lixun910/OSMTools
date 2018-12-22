@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <boost/thread.hpp>
 #include <sstream>
 #include <iostream>
 #include <fstream>
@@ -637,6 +638,8 @@ void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVe
     DevicePlan *devicePlans = (DevicePlan*) malloc(sizeof(DevicePlan) * deviceCount);
     pthread_t *threadIDs = (pthread_t*) malloc(sizeof(pthread_t) * deviceCount);
 
+    boost::thread* bthread[deviceCount];
+
     // Divide the workload out per device
     int resultsPerDevice = numResults / deviceCount;
 
@@ -664,6 +667,7 @@ void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVe
     for (unsigned int i = 0; i < deviceCount; i++)
     {
         pthread_create(&threadIDs[i], NULL, (void* (*)(void*))dijkstraThread, (void*)(devicePlans + i));
+        bthread[i] = new boost::thread(worker[j]);
     }
 
     // Wait for the results from all threads
