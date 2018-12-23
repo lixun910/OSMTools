@@ -54,10 +54,6 @@ namespace OSMTools {
         int* edge_array;
         int* weight_array;
 
-        cl_platform_id platform;
-        cl_context gpuContext;
-        cl_context cpuContext;
-        cl_uint numPlatforms;
 
         bool has_gpus;
         bool has_cpu;

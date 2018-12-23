@@ -40,11 +40,13 @@ namespace OSMTools {
 
         int GetNumNodes();
 
-        int GetNumEdges();
+        int GetNumEdges(std::vector<std::string>& nodes);
 
+        boost::unordered_map<std::string, int> id_map;
         std::vector<double> lat_arr;
         std::vector<double> lon_arr;
-        boost::unordered_map<int, std::vector<std::pair<int, double> > > edge_dict;
+        boost::unordered_map<std::string,
+            std::vector<std::pair<std::string, double> > > edge_dict;
 
     protected:
         std::string GetOSMFilter(RoadType road_type);
@@ -56,19 +58,14 @@ namespace OSMTools {
     protected:
         std::string base_url;
         // properties for nodes
-        boost::unordered_map<std::string, int> id_map;
 
 
-        //std::vector<std::string> speed_arr;
         // properties for edges
         std::vector<std::string> way_arr;
         boost::unordered_map<std::string, int> node_cnt_dict;
         std::vector<std::vector<std::string> > ways;
         // highway, name, county, oneway, maxspeed
         std::vector<std::vector<std::string> > way_properties;
-
-
-
     };
 }
 

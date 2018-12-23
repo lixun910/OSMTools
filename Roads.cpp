@@ -43,9 +43,24 @@ int Roads::GetNumNodes()
     return id_map.size();
 }
 
-int Roads::GetNumEdges()
+int Roads::GetNumEdges(std::vector<std::string>& nodes)
 {
-    return ways.size();
+    boost::unordered_map<std::string, int> node_dict;
+    int num_edges = 0;
+    boost::unordered_map<std::string,
+            std::vector<std::pair<std::string, double> > >::iterator it;
+    for (it=edge_dict.begin(); it!=edge_dict.end(); ++it) {
+        node_dict[it->first] = 1;
+        num_edges += it->second.size();
+        for (size_t i=0; i<it->second.size(); i++) {
+            node_dict[it->second[i].first] = 1;
+        }
+    }
+    boost::unordered_map<std::string, int>::iterator node_it;
+    for (node_it=node_dict.begin(); node_it!=node_dict.end(); ++node_it) {
+        nodes.push_back(node_it->first);
+    }
+    return num_edges;
 }
 
 std::string Roads::GetOSMFilter(RoadType road_type)
@@ -293,18 +308,18 @@ void Roads::SaveEdgesToShapefile(const char *file_name)
         return;
     }
     for (size_t i=0; i<ways.size(); ++i) {
-        std::vector<int> valid_nodes;
+        std::vector<std::string> valid_nodes;
         for (size_t j=0; j<ways[i].size(); ++j) {
             std::string tmp_id = ways[i][j];
             if (node_cnt_dict[tmp_id] > 1) {
-                valid_nodes.push_back(id_map[tmp_id]);
+                valid_nodes.push_back(tmp_id);
             }
         }
         if (valid_nodes.empty()) continue;
 
         for (size_t j=0; j<valid_nodes.size()-1; ++j) {
-            int from_idx = valid_nodes[j];
-            int to_idx = valid_nodes[j+1];
+            std::string from = valid_nodes[j];
+            std::string to = valid_nodes[j+1];
             OGRFeature *poFeature;
             poFeature = OGRFeature::CreateFeature( poLayer->GetLayerDefn() );
             for (size_t c=0; c<6; ++c) {
@@ -316,6 +331,8 @@ void Roads::SaveEdgesToShapefile(const char *file_name)
                     poFeature->SetField(c, val);
                 }
             }
+            int from_idx = id_map[from];
+            int to_idx = id_map[to];
             double dist = ComputeArcDist(from_idx, to_idx);
             poFeature->SetField(6, dist);
 
@@ -336,9 +353,9 @@ void Roads::SaveEdgesToShapefile(const char *file_name)
             }
             OGRFeature::DestroyFeature( poFeature );
 
-            edge_dict[from_idx].push_back(std::make_pair(to_idx, dist));
+            edge_dict[from].push_back(std::make_pair(to, dist));
             if (boost::iequals(way_properties[i][3], "yes") == false) {
-                edge_dict[to_idx].push_back(std::make_pair(from_idx, dist));
+                edge_dict[to].push_back(std::make_pair(from, dist));
             }
         }
     }
