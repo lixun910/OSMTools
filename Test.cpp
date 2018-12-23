@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "Roads.h"
+#include "TravelTool.h"
 
 int main(void)
 {
@@ -21,8 +22,10 @@ int main(void)
     //roads.DownloadByBoundingBox(lat_min, lng_min, lat_max, lng_max,
     //        OSMTools::drive,
     //        "/Users/xun/Dropbox/drive.json");
-    roads.ReadOSMNodes("/Users/xun/Desktop/data.json");
-    roads.SaveEdgesToShapefile("/Users/xun/Desktop/data.json");
+    roads.ReadOSMNodes("/Users/xun/Dropbox/drive.json");
+    roads.SaveEdgesToShapefile("/Users/xun/Dropbox/drive.json");
     //roads.SaveCSVToShapefile("/Users/xun/Downloads/road/bld/_edges.csv");
+    OSMTools::TravelTool tt(&roads);
+    tt.QueryByCSV("/Users/xun/Dropbox/LEHD_blocks.csv");
     return 0;
 }

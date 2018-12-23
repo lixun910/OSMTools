@@ -58,7 +58,8 @@ using namespace std;
 ///
 //  Globals
 //
-pthread_mutex_t mutex1 = PTHREAD_MUTEX_INITIALIZER;
+//pthread_mutex_t mutex1 = PTHREAD_MUTEX_INITIALIZER;
+boost::mutex mtx;
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -74,7 +75,8 @@ pthread_mutex_t mutex1 = PTHREAD_MUTEX_INITIALIZER;
 ///
 cl_program loadAndBuildProgram( cl_context gpuContext, const char *fileName )
 {
-    pthread_mutex_lock(&mutex1);
+    //pthread_mutex_lock(&mutex1);
+    mtx.lock();
 
     cl_int errNum;
     cl_program program;
@@ -110,7 +112,8 @@ cl_program loadAndBuildProgram( cl_context gpuContext, const char *fileName )
         checkError(errNum, CL_SUCCESS);
     }
 
-    pthread_mutex_unlock(&mutex1);
+    //pthread_mutex_unlock(&mutex1);
+    mtx.unlock();
     return program;
 }
 
@@ -636,7 +639,7 @@ void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVe
     }
 
     DevicePlan *devicePlans = (DevicePlan*) malloc(sizeof(DevicePlan) * deviceCount);
-    pthread_t *threadIDs = (pthread_t*) malloc(sizeof(pthread_t) * deviceCount);
+    //pthread_t *threadIDs = (pthread_t*) malloc(sizeof(pthread_t) * deviceCount);
 
     boost::thread* bthread[deviceCount];
 
@@ -666,18 +669,24 @@ void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVe
     // Launch all the threads
     for (unsigned int i = 0; i < deviceCount; i++)
     {
-        pthread_create(&threadIDs[i], NULL, (void* (*)(void*))dijkstraThread, (void*)(devicePlans + i));
-        bthread[i] = new boost::thread(worker[j]);
+        //pthread_create(&threadIDs[i], NULL, (void* (*)(void*))dijkstraThread, (void*)(devicePlans + i));
+        bthread[i] = new boost::thread(&dijkstraThread, (DevicePlan*)(devicePlans + i));
     }
 
     // Wait for the results from all threads
     for (unsigned int i = 0; i < deviceCount; i++)
     {
-        pthread_join(threadIDs[i], NULL);
+        //pthread_join(threadIDs[i], NULL);
+        bthread[i]->join();
+    }
+
+    for (unsigned int i = 0; i < deviceCount; i++)
+    {
+        delete bthread[i];
     }
 
     free (devicePlans);
-    free (threadIDs);
+    //free (threadIDs);
 }
 
 ///
@@ -736,7 +745,8 @@ void runDijkstraMultiGPUandCPU( cl_context gpuContext, cl_context cpuContext, Gr
     cl_uint totalDeviceCount = gpuDeviceCount + cpuDeviceCount;
 
     DevicePlan *devicePlans = (DevicePlan*) malloc(sizeof(DevicePlan) * totalDeviceCount);
-    pthread_t *threadIDs = (pthread_t*) malloc(sizeof(pthread_t) * totalDeviceCount);
+    //pthread_t *threadIDs = (pthread_t*) malloc(sizeof(pthread_t) * totalDeviceCount);
+    boost::thread* bthread[totalDeviceCount];
 
     int gpuResults = numResults / (ratioCPUtoGPU);
     cout << "gpuResults: " << gpuResults;
@@ -786,17 +796,23 @@ void runDijkstraMultiGPUandCPU( cl_context gpuContext, cl_context cpuContext, Gr
     // Launch all the threads
     for (unsigned int i = 0; i < totalDeviceCount; i++)
     {
-        pthread_create(&threadIDs[i], NULL, (void* (*)(void*))dijkstraThread, (void*)(devicePlans + i));
+        //pthread_create(&threadIDs[i], NULL, (void* (*)(void*))dijkstraThread, (void*)(devicePlans + i));
+        bthread[i] = new boost::thread(&dijkstraThread, (DevicePlan*)(devicePlans + i));
     }
 
     // Wait for the results from all threads
     for (unsigned int i = 0; i < totalDeviceCount; i++)
     {
-        pthread_join(threadIDs[i], NULL);
+        //pthread_join(threadIDs[i], NULL);
+        bthread[i]->join();
     }
 
+    for (unsigned int i = 0; i < totalDeviceCount; i++)
+    {
+        delete bthread[i];
+    }
     free (devicePlans);
-    free (threadIDs);
+    //free (threadIDs);
 }
 
 ///

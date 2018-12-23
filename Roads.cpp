@@ -38,6 +38,16 @@ Roads::Roads()
 
 Roads::~Roads() {}
 
+int Roads::GetNumNodes()
+{
+    return id_map.size();
+}
+
+int Roads::GetNumEdges()
+{
+    return ways.size();
+}
+
 std::string Roads::GetOSMFilter(RoadType road_type)
 {
     if (road_type == OSMTools::drive) {
@@ -117,7 +127,7 @@ std::string Roads::GetValueFromLine(std::string line, bool quoted)
             tmp = tmp.substr(start + 1, end - start);
         }
     }
-    return tmp;
+    return trim(tmp);
 }
 
 void Roads::ReadOSMNodes(const char *file_name)
@@ -325,6 +335,11 @@ void Roads::SaveEdgesToShapefile(const char *file_name)
                 return;
             }
             OGRFeature::DestroyFeature( poFeature );
+
+            edge_dict[from_idx].push_back(std::make_pair(to_idx, dist));
+            if (boost::iequals(way_properties[i][3], "yes") == false) {
+                edge_dict[to_idx].push_back(std::make_pair(from_idx, dist));
+            }
         }
     }
     GDALClose( poDS );
