@@ -224,7 +224,10 @@ void runDijkstraMultiGPUandCPU( cl_context gpuContext, cl_context cpuContext, Gr
 ///                        This must be sized numResults * graph->numVertices.
 /// \param numResults Should be the size of all three passed inarrays
 ///
-void runDijkstraRef( GraphData* graph, int *sourceVertices,
+void runDijkstraMT ( GraphData* graph, int *sourceVertices,
                      int *outResultCosts, int numResults );
+
+void runDijkstraRef( GraphData* graph, int *sourceVertices,
+                     int *outResultCosts, int start, int end);
 
 #endif // DIJKSTRA_KERNEL_H

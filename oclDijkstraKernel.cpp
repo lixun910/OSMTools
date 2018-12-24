@@ -28,7 +28,7 @@
 #include <iostream>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
+//#include <pthread.h>
 #include <boost/thread.hpp>
 #include <sstream>
 #include <iostream>
@@ -714,7 +714,7 @@ void runDijkstraMultiGPUandCPU( cl_context gpuContext, cl_context cpuContext, Gr
                                 int *sourceVertices,
                                 int *outResultCosts, int numResults )
 {
-    float ratioCPUtoGPU = 1.0; // CPU seems to run it at 2.26X on GT120 GPU
+    float ratioCPUtoGPU = 0.5; // CPU seems to run it at 2.26X on GT120 GPU
 
     // Find out how many GPU's to compute on all available GPUs
     cl_int errNum;
@@ -726,41 +726,28 @@ void runDijkstraMultiGPUandCPU( cl_context gpuContext, cl_context cpuContext, Gr
     checkError(errNum, CL_SUCCESS);
     gpuDeviceCount = (cl_uint)deviceBytes/sizeof(cl_device_id);
 
-    if (gpuDeviceCount == 0)
-    {
+    if (gpuDeviceCount == 0) {
         cerr << "ERROR: no GPUs present!" << endl;
         return;
     }
 
-    errNum = clGetContextInfo(cpuContext, CL_CONTEXT_DEVICES, 0, NULL, &deviceBytes);
-    checkError(errNum, CL_SUCCESS);
-    cpuDeviceCount = (cl_uint)deviceBytes/sizeof(cl_device_id);
-
-    if (cpuDeviceCount == 0)
-    {
-        cerr << "ERROR: no CPUs present!" << endl;
-        return;
-    }
-
-    cl_uint totalDeviceCount = gpuDeviceCount + cpuDeviceCount;
+    cl_uint totalDeviceCount = gpuDeviceCount + 1;
 
     DevicePlan *devicePlans = (DevicePlan*) malloc(sizeof(DevicePlan) * totalDeviceCount);
-    //pthread_t *threadIDs = (pthread_t*) malloc(sizeof(pthread_t) * totalDeviceCount);
     boost::thread* bthread[totalDeviceCount];
 
-    int gpuResults = numResults / (ratioCPUtoGPU);
-    cout << "gpuResults: " << gpuResults;
-    int cpuResults = numResults - gpuResults;
-    cout << "cpuResults: " << cpuResults;
+    int cpuResults = numResults * (ratioCPUtoGPU);
+    cout << "cpuResults: " << cpuResults << endl;
 
+    int gpuResults = numResults - cpuResults;
+    cout << "gpuResults: " << gpuResults << endl;
+
+    // run on GPUs:
     // Divide the workload out per device
-    int resultsPerGPU = gpuResults / totalDeviceCount;
-
-    int offset = 0;
-
+    int resultsPerGPU = gpuResults / gpuDeviceCount;
     int curDevice = 0;
-    for (unsigned int i = 0; i < gpuDeviceCount; i++)
-    {
+    int offset = cpuResults;
+    for (unsigned int i = 0; i < gpuDeviceCount; i++) {
         devicePlans[curDevice].context = gpuContext;
         devicePlans[curDevice].deviceId = getDev(gpuContext, i);;
         devicePlans[curDevice].graph = graph;
@@ -772,47 +759,28 @@ void runDijkstraMultiGPUandCPU( cl_context gpuContext, cl_context cpuContext, Gr
         curDevice++;
     }
 
-    int resultsPerCPU = cpuResults;
-
-    for (unsigned int i = 0; i < cpuDeviceCount; i++)
-    {
-        devicePlans[curDevice].context = cpuContext;
-        devicePlans[curDevice].deviceId = getDev(cpuContext, i);;
-        devicePlans[curDevice].graph = graph;
-        devicePlans[curDevice].sourceVertices = &sourceVertices[offset];
-        devicePlans[curDevice].outResultCosts = &outResultCosts[offset * graph->vertexCount];
-        devicePlans[curDevice].numResults = resultsPerCPU;
-
-        offset += resultsPerCPU;
-        curDevice++;
-    }
-
     // Add any remaining work to the last GPU
-    if (offset < numResults)
-    {
-        devicePlans[totalDeviceCount - 1].numResults += (numResults - offset);
+    if (offset < numResults) {
+        devicePlans[gpuDeviceCount - 1].numResults += (numResults - offset);
     }
 
     // Launch all the threads
-    for (unsigned int i = 0; i < totalDeviceCount; i++)
-    {
-        //pthread_create(&threadIDs[i], NULL, (void* (*)(void*))dijkstraThread, (void*)(devicePlans + i));
+    for (unsigned int i = 0; i < gpuDeviceCount; i++) {
         bthread[i] = new boost::thread(&dijkstraThread, (DevicePlan*)(devicePlans + i));
     }
+    // run on CPU
+    bthread[totalDeviceCount-1] = new boost::thread(
+            boost::bind(&runDijkstraMT, graph, sourceVertices, outResultCosts, cpuResults));
 
     // Wait for the results from all threads
-    for (unsigned int i = 0; i < totalDeviceCount; i++)
-    {
-        //pthread_join(threadIDs[i], NULL);
+    for (unsigned int i = 0; i < totalDeviceCount; i++) {
         bthread[i]->join();
     }
 
-    for (unsigned int i = 0; i < totalDeviceCount; i++)
-    {
+    for (unsigned int i = 0; i < totalDeviceCount; i++) {
         delete bthread[i];
     }
     free (devicePlans);
-    //free (threadIDs);
 }
 
 ///
@@ -850,7 +818,7 @@ bool maskArrayEmpty(int *maskArray, int count)
 /// \param numResults Should be the size of all three passed inarrays
 ///
 void runDijkstraRef( GraphData* graph, int *sourceVertices,
-                     int *outResultCosts, int numResults )
+                     int *outResultCosts, int start, int end)
 {
 
     // Create the arrays needed for processing the algorithm
@@ -858,7 +826,7 @@ void runDijkstraRef( GraphData* graph, int *sourceVertices,
     int *updatingCostArray = new int[graph->vertexCount];
     int *maskArray = new int[graph->vertexCount];
 
-    for (int i = 0; i < numResults; i++)
+    for (int i = start; i <= end; i++)
     {
         // Initialize the buffer for this run
         for (int v = 0; v < graph->vertexCount; v++)
@@ -934,4 +902,45 @@ void runDijkstraRef( GraphData* graph, int *sourceVertices,
     delete [] costArray;
     delete [] updatingCostArray;
     delete [] maskArray;
+}
+
+void runDijkstraMT(GraphData* graph, int *sourceVertices,
+                   int *outResultCosts, int numResults )
+{
+    cout << "CPU: Computing '" << numResults << "' results." << endl;
+    unsigned int nCPUs = boost::thread::hardware_concurrency();
+    int work_chunk = numResults / nCPUs;
+
+    if (work_chunk == 0) work_chunk = 1;
+
+    int obs_start = 0;
+    int obs_end = obs_start + work_chunk;
+    int quotient = numResults / nCPUs;
+    int remainder = numResults % nCPUs;
+    int tot_threads = (quotient > 0) ? nCPUs : remainder;
+
+    boost::thread* bthread[tot_threads];
+
+    for (unsigned int i=0; i<tot_threads; i++) {
+        int a=0;
+        int b=0;
+        if (i < remainder) {
+            a = i*(quotient+1);
+            b = a+quotient;
+        } else {
+            a = remainder*(quotient+1) + (i-remainder)*quotient;
+            b = a+quotient-1;
+        }
+
+        bthread[i] = new boost::thread(boost::bind(&runDijkstraRef, (GraphData*) graph,
+                (int*)sourceVertices, (int*)outResultCosts, a, b));
+    }
+    for (unsigned int i = 0; i < tot_threads; i++) {
+        bthread[i]->join();
+    }
+
+    for (unsigned int i = 0; i < tot_threads; i++) {
+        delete bthread[i];
+    }
+    cout << "CPU: Computed '" << numResults << "' results." << endl;
 }

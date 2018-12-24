@@ -288,10 +288,20 @@ double* TravelTool::QueryByCSV(const char *file_path) {
     }
 
     pt::ptime startTimeGPUCPU = pt::microsec_clock::local_time();
-    //if (has_gpus && has_cpu) {
-    runDijkstraMultiGPU(gpuContext, &graph, sourceVertArray,
-                                  results, query_size);
-    //}
+    /*
+    // CPU
+    {
+        size_t szParmDataBytes;
+        cl_device_id *cdDevices;
+        // get the list of GPU devices associated with context
+        clGetContextInfo(cpuContext, CL_CONTEXT_DEVICES, 0, NULL, &szParmDataBytes);
+        cdDevices = (cl_device_id *) malloc(szParmDataBytes);
+        runDijkstra(cpuContext, cdDevices[0], &graph, sourceVertArray, results, query_size);
+    }
+     */
+    //runDijkstraMultiGPU(gpuContext, &graph, sourceVertArray, results, query_size);
+    runDijkstraMultiGPUandCPU(gpuContext, cpuContext, &graph, sourceVertArray, results, query_size);
+
     pt::time_duration timeGPUCPU = pt::microsec_clock::local_time() - startTimeGPUCPU;
     printf("\nrunDijkstra - Multi GPU and CPU Time: %f s\n", (float)timeGPUCPU.total_milliseconds() / 1000.0f);
 
