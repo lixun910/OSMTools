@@ -8,12 +8,14 @@ set (DEP_LIBRARY_PATH ${CMAKE_SOURCE_DIR}/deps)
 
 # Dependencies:
 # libcurl
-set (CURL_LIBRARY "-lcurl")
 find_package(CURL REQUIRED)
 # boost
 find_package(Boost COMPONENTS thread system REQUIRED)
 # gdal
 find_package(GDAL REQUIRED)
+set (GDAL_INCLUDE_DIR "/usr/local/include")
+set (GDAL_LIBRARIES "-L/usr/local/lib -lgdal")
+message(WARNING ${GDAL_INCLUDE_DIR})
 # wxWidgets
 set (wxWidgets_CONFIGURATION /usr/local/bin/wx-config)
 find_package(wxWidgets REQUIRED core base REQUIRED)
@@ -22,15 +24,15 @@ set (ANN_INCLUDE_DIR ${DEP_LIBRARY_PATH}/ANN/include)
 set (ANN_LIBRARIES ${DEP_LIBRARY_PATH}/ANN/lib/libANN.a)
 # opencl
 if (APPLE)
-    # osx > 10.13 deprecates OpenCL
+    # osx > 10.13 deprecates OpenCL, so you have to use XCode 9.x
     set(CMAKE_OSX_SYSROOT /Applications/Xcode9.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.13.sdk)
     set(OPENCL_LIBRARIES "-framework OpenCL")
 endif()
 
-
 # Main project
 add_executable(OSMToolsProject Test.cpp csv.h oclDijkstraKernel.cpp oclDijkstraKernel.h Downloader.cpp Downloader.h
-Roads.cpp Roads.h TravelTool.cpp TravelTool.h uiRoadDownload.cpp uiRoadDownload.h Test.h)
+Roads.cpp Roads.h TravelTool.cpp TravelTool.h uiRoadDownload.cpp uiRoadDownload.h Test.h uiTravelDistances.cpp uiTravelDistances.h
+        CsvFieldConfDlg.h CsvFieldConfDlg.cpp)
 
 include_directories(${CURL_INCLUDE_DIR})
 target_link_libraries(OSMToolsProject ${CURL_LIBRARIES})
@@ -40,6 +42,7 @@ target_link_libraries(OSMToolsProject ${Boost_LIBRARIES})
 
 include_directories(${GDAL_INCLUDE_DIR})
 target_link_libraries(OSMToolsProject ${GDAL_LIBRARIES})
+
 
 include_directories(${ANN_INCLUDE_DIR})
 target_link_libraries(OSMToolsProject ${ANN_LIBRARIES})

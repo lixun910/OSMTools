@@ -7,6 +7,10 @@
 
 #include <wx/wx.h>
 
-
+class TestApp: public wxApp
+{
+public:
+    virtual bool OnInit();
+};
 
 #endif //OSMTOOLSPROJECT_TEST_H

@@ -6,7 +6,7 @@
 #include <fstream>
 #include <algorithm>
 #include <boost/algorithm/string.hpp>
-#include "ogrsf_frmts.h"
+#include <ogrsf_frmts.h>
 
 #include "Downloader.h"
 #include "Roads.h"
@@ -362,12 +362,8 @@ void Roads::SaveEdgesToShapefile(const char *file_name)
     GDALClose( poDS );
 }
 
-void Roads::SaveToShapefile(const char *file_name)
+void Roads::SaveToShapefile(const char *shp_file_name)
 {
-    std::string shp_file_name = file_name;
-    shp_file_name = shp_file_name.substr(0, shp_file_name.rfind("."));
-    shp_file_name = shp_file_name + ".shp";
-
     const char *pszDriverName = "ESRI Shapefile";
     GDALDriver *poDriver;
     GDALAllRegister();
@@ -377,7 +373,7 @@ void Roads::SaveToShapefile(const char *file_name)
         return;
     }
     GDALDataset *poDS;
-    poDS = poDriver->Create(shp_file_name.c_str(), 0, 0, 0, GDT_Unknown, NULL );
+    poDS = poDriver->Create(shp_file_name, 0, 0, 0, GDT_Unknown, NULL );
     if( poDS == NULL ) {
         printf( "Creation of output file failed.\n" );
         return;

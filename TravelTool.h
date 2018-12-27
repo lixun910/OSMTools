@@ -8,6 +8,7 @@
 #include <vector>
 #include <boost/unordered_map.hpp>
 #include <ANN/ANN.h>
+#include <ogrsf_frmts.h>
 
 #include "oclDijkstraKernel.h"
 #include "Roads.h"
@@ -21,7 +22,11 @@ namespace OSMTools {
 
         TravelTool(Roads* roads);
 
-        //TravelTool(std::vector<)
+        TravelTool(const char* road_shp_path,
+                const char* query_pts_shp_path);
+
+        TravelTool(std::vector<OGRFeature*> roads,
+                std::vector<OGRFeature*> query_points);
 
         ~TravelTool();
 
@@ -40,9 +45,12 @@ namespace OSMTools {
 
         void InitFromCSV(const char* file_name);
 
-        void InitFromTable(std::vector<std::string>& from, std::vector<std::string>& to,
-                           std::vector<std::string>& highway, std::vector<std::string>& maxspeed,
-                           std::vector<std::string>& oneway, std::vector<double>& distance);
+        void InitFromTable(std::vector<std::string>& from,
+                std::vector<std::string>& to,
+                std::vector<std::string>& highway,
+                std::vector<std::string>& maxspeed,
+                std::vector<std::string>& oneway,
+                std::vector<double>& distance);
 
     protected:
         GraphData graph;
