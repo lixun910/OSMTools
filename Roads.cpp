@@ -15,8 +15,13 @@
 #define PI 3.141592653589793238463
 #endif
 
+#ifndef PI_OVER_180
 #define PI_OVER_180 0.017453292519943
+#endif
+
+#ifndef EARTH_RADIUS
 #define EARTH_RADIUS 6372795  // meters
+#endif
 
 using namespace OSMTools;
 

@@ -35,22 +35,20 @@ namespace OSMTools {
 
     protected:
 
-        void BuildKdTreeFromRoads();
+        void PreprocessRoads();
 
-        void MergeTwoWaysByStart(int w1, int w2);
+        bool MergeTwoWaysByStart(int w1, int w2);
 
-        void MergeTwoWaysByEnd(int w1, int w2);
+        bool MergeTwoWaysByEnd(int w1, int w2);
+
+        double ComputeArcDist(OGRPoint& from, OGRPoint& to);
+
+        void AddEdge(int way_idx, OGRPoint& from,
+                OGRPoint& to, double cost);
 
         void BuildKdTree();
 
         void InitFromCSV(const char* file_name);
-
-        void InitFromTable(std::vector<std::string>& from,
-                std::vector<std::string>& to,
-                std::vector<std::string>& highway,
-                std::vector<std::string>& maxspeed,
-                std::vector<std::string>& oneway,
-                std::vector<double>& distance);
 
     protected:
         GraphData graph;
@@ -69,18 +67,29 @@ namespace OSMTools {
 
         std::vector<std::vector<OGRPoint> > edges;
 
-        std::vector<RD_POINT> node_array;
+        std::vector<bool> oneway_dict;
 
         boost::unordered_map<int, bool> removed_edges;
 
+        boost::unordered_map<int,
+            std::vector<std::pair<int, double> > > edges_dict;
+
+        std::vector<RD_POINT> nodes;
+
+        std::vector<bool> nodes_flag;
+
+        boost::unordered_map<RD_POINT, int> nodes_dict;
+
+        boost::unordered_map<std::pair<int, int>, double> pair_cost;
+
         // node: count of edge appearance
-        boost::unordered_map<RD_POINT, int> node_appearance;
+        boost::unordered_map<int, int> node_appearance;
 
         // end node: [way index, way index...]
-        boost::unordered_map<RD_POINT, std::vector<int> > endpoint_dict;
+        boost::unordered_map<int, std::vector<int> > endpoint_dict;
 
         // anchor points in roads
-        boost::unordered_map<RD_POINT, bool> anchor_points;
+        boost::unordered_map<int, bool> anchor_points;
 
         // anchor point idx : <query point idx, distance>
         boost::unordered_map<int,
@@ -88,6 +97,7 @@ namespace OSMTools {
 
         // final query nodes for dijkstra
         std::vector<int> query_nodes;
+
 
 
 
