@@ -2,7 +2,6 @@
 // Created by Xun Li on 12/22/18.
 //
 #include <boost/date_time/posix_time/posix_time.hpp>
-#include "csv.h"  // https://github.com/ben-strasser/fast-cpp-csv-parser
 
 #include "TravelTool.h"
 
@@ -59,60 +58,6 @@ TravelTool::TravelTool()
     };
 }
 
-TravelTool::TravelTool(Roads* roads)
-: TravelTool()
-{
-    num_edges = roads->GetNumEdges(node_ids);
-    num_nodes = node_ids.size();
-
-    for (unsigned int i=0; i<num_nodes; ++i) {
-        node_id_dict[node_ids[i]] = i;
-    }
-
-    vertex_array = (int*) malloc(num_nodes * sizeof(int));
-    edge_array = (int*)malloc(num_edges * sizeof(int));
-    weight_array = (int*)malloc(num_edges * sizeof(int));
-
-    graph.vertexCount = num_nodes;
-    graph.vertexArray = vertex_array;
-    graph.edgeCount = num_edges;
-    graph.edgeArray = edge_array;
-    graph.weightArray = weight_array;
-
-    size_t offset = 0, e_idx = 0, e_size;
-    double cost = 0;
-    for(unsigned int i = 0; i < graph.vertexCount; i++) {
-        graph.vertexArray[i] = offset;
-        std::string node = node_ids[i];
-        if (roads->edge_dict.find(node) == roads->edge_dict.end())
-            continue;
-        e_size = roads->edge_dict[node].size();
-        for (unsigned int j=0; j<e_size; j++) {
-            std::string nbr_id = roads->edge_dict[node][j].first;
-            cost = roads->edge_dict[node][j].second;
-            graph.edgeArray[e_idx] = node_id_dict[nbr_id];
-            graph.weightArray[e_idx++] = cost;
-        }
-        offset += e_size;
-    }
-
-    double** xy = new double*[num_nodes];
-    for (size_t i=0; i<num_nodes; i++) {
-        std::string node = node_ids[i];
-        int idx = roads->id_map[node];
-        xy[i] = new double[2];
-        xy[i][0] = roads->lon_arr[idx];
-        xy[i][1] = roads->lat_arr[idx];
-    }
-    kd_tree = new ANNkd_tree(xy, num_nodes, 2);
-}
-
-TravelTool::TravelTool(const char* road_shp_path,
-                       const char* query_pts_shp_path)
-{
-
-}
-
 TravelTool::TravelTool(std::vector<OGRFeature*> in_roads,
         std::vector<OGRFeature*> in_query_points)
     : TravelTool()
@@ -125,17 +70,11 @@ TravelTool::TravelTool(std::vector<OGRFeature*> in_roads,
 
 TravelTool::~TravelTool()
 {
-    if (query_xy) {
-        for (size_t i=0; i<query_points.size(); ++i) {
-            delete[] query_xy[i];
-        }
-        delete[] query_xy;
-    }
     free(vertex_array);
     free(edge_array);
     free(weight_array);
 
-    if (kd_tree) delete kd_tree;
+   if (kd_tree) delete kd_tree;
 }
 
 void TravelTool::PreprocessRoads()
@@ -527,150 +466,3 @@ double TravelTool::ComputeArcDist(OGRPoint& from, OGRPoint& to)
     return 2 * EARTH_RADIUS * asin(sqrt(a+b));
 }
 
-void TravelTool::BuildKdTree()
-{
-    if (query_points.empty() == true) return;
-
-    int query_size = query_points.size();
-    query_xy = new double*[query_size];
-
-    OGRFeature* feature;
-    OGRGeometry* geom;
-    OGRPoint* pt;
-    for (size_t i=0; i<query_size; ++i) {
-        query_xy[i] = new double[2];
-        feature = query_points[i];
-        geom = feature->GetGeometryRef();
-        if (geom && geom->IsEmpty() == false) {
-            pt = (OGRPoint*)geom;
-            query_xy[i][0] = pt->getX();
-            query_xy[i][1] = pt->getY();
-        }
-    }
-    if (kd_tree != 0) {
-        delete kd_tree;
-    }
-    kd_tree = new ANNkd_tree(query_xy, query_size, 2);
-}
-
-void TravelTool::InitFromCSV(const char *file_name) {
-    if (file_name == 0) return;
-
-    io::CSVReader<6> in(file_name);
-    in.read_header(io::ignore_extra_column, "distance", "from", "to", "highway", "maxspeed", "oneway");
-    double distance; std::string from; std::string  to; std::string highway; std::string maxspeed; std::string oneway;
-    int node_idx = 0;
-    while(in.read_row(distance, from, to, highway, maxspeed, oneway)){
-        if (distance <= 0) {
-            continue;
-        }
-        if (node_id_dict.find(from) == node_id_dict.end()) {
-            node_id_dict[from] = node_idx;
-            node_idx ++;
-            node_ids.push_back(from);
-        }
-        if (node_id_dict.find(to) == node_id_dict.end()) {
-            node_id_dict[to] = node_idx;
-            node_idx ++;
-            node_ids.push_back(to);
-        }
-
-        double w = 0;
-        if (maxspeed.empty()) {
-            if (speed_limit_dict.find(highway) != speed_limit_dict.end()) {
-                double sl = speed_limit_dict[highway];
-                w = distance / sl;
-            } else {
-                w = distance / 40.0;  // for not labeld road
-            }
-        } else {
-            std::string sp_str = maxspeed.substr(0,2);
-            double sl = std::stoi(sp_str);
-            w = distance / sl;
-        }
-
-        edge_dict[from].push_back(std::make_pair(to, w));
-        if (oneway != "yes") {
-            edge_dict[to].push_back(std::make_pair(from,w));
-        }
-    }
-
-}
-
-double* TravelTool::QueryByCSV(const char *file_path) {
-    double eps = 0; // error bound
-    ANNidxArray nnIdx = new ANNidx[1];
-    ANNdistArray dists = new ANNdist[1];
-
-    std::vector<int> query_nodes;
-    boost::unordered_map<int, std::vector<std::pair<std::string, double> > > sourceDict;
-
-    io::CSVReader<3> query_in(file_path);
-    query_in.read_header(io::ignore_extra_column, "BLOCKID10", "long", "lat");
-    std::string blockid; double lng; double lat;
-    int q_id;
-    while(query_in.read_row(blockid, lng, lat)){
-        double* pt = new double[2];
-        pt[0] = lng;
-        pt[1] = lat;
-        kd_tree->annkSearch(pt, 1, nnIdx, dists, eps);
-        q_id = nnIdx[0];
-        if (sourceDict.find( q_id ) == sourceDict.end()) {
-            query_nodes.push_back(q_id);
-        }
-        sourceDict[q_id].push_back( std::make_pair(blockid, dists[0]/20.0) );
-    }
-    delete[] nnIdx;
-    delete[] dists;
-    delete kd_tree;
-
-    //query_nodes.resize(100);
-    int query_size = query_nodes.size();
-
-    int *results = (int*) malloc(sizeof(int) * query_size * graph.vertexCount);
-    int *sourceVertArray = (int*) malloc(sizeof(int) * query_size);
-    for (size_t i=0; i<query_size; i++) sourceVertArray[i] = query_nodes[i];
-
-    cl_int errNum;
-    cl_platform_id platform;
-    cl_context gpuContext;
-    cl_context cpuContext;
-    cl_uint numPlatforms;
-
-    // First, select an OpenCL platform to run on.  For this example, we
-    // simply choose the first available platform.  Normally, you would
-    // query for all available platforms and select the most appropriate one.
-
-    errNum = clGetPlatformIDs(1, &platform, &numPlatforms);
-    printf("Number of OpenCL Platforms: %d\n", numPlatforms);
-    if (errNum != CL_SUCCESS || numPlatforms <= 0) {
-        printf("Failed to find any OpenCL platforms.\n");
-        return 0;
-    }
-
-    // create the OpenCL context on available GPU devices
-    gpuContext = clCreateContextFromType(0, CL_DEVICE_TYPE_GPU, NULL, NULL, &errNum);
-    if (errNum != CL_SUCCESS) {
-        printf("No GPU devices found.\n");
-    }
-
-    // Create an OpenCL context on available CPU devices
-    cpuContext = clCreateContextFromType(0, CL_DEVICE_TYPE_CPU, NULL, NULL, &errNum);
-    if (errNum != CL_SUCCESS) {
-        printf("No CPU devices found.\n");
-    }
-
-    pt::ptime startTimeGPUCPU = pt::microsec_clock::local_time();
-    runDijkstraMultiGPUandCPU(gpuContext, cpuContext, &graph, sourceVertArray, results, query_size);
-
-    pt::time_duration timeGPUCPU = pt::microsec_clock::local_time() - startTimeGPUCPU;
-    printf("\nrunDijkstra - Multi GPU and CPU Time: %f s\n", (float)timeGPUCPU.total_milliseconds() / 1000.0f);
-
-    clReleaseContext(gpuContext);
-    clReleaseContext(cpuContext);
-
-    free(sourceVertArray);
-    free(results);
-
-    return 0;
-}

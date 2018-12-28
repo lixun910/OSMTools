@@ -29,8 +29,8 @@ int test(void)
     roads.ReadOSMNodes("/Users/xun/Dropbox/drive.json");
     roads.SaveEdgesToShapefile("/Users/xun/Dropbox/drive.json");
     //roads.SaveCSVToShapefile("/Users/xun/Downloads/road/bld/_edges.csv");
-    OSMTools::TravelTool tt(&roads);
-    tt.QueryByCSV("/Users/xun/Dropbox/LEHD_blocks.csv");
+    //OSMTools::TravelTool tt(&roads);
+    //tt.QueryByCSV("/Users/xun/Dropbox/LEHD_blocks.csv");
     return 0;
 }
 

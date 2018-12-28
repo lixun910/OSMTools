@@ -14,24 +14,16 @@
 #include "Roads.h"
 
 namespace OSMTools {
-    typedef std::pair<std::string, double> nbr_cost;
     typedef std::pair<double, double> RD_POINT;
 
     class TravelTool {
     public:
         TravelTool();
 
-        TravelTool(Roads* roads);
-
-        TravelTool(const char* road_shp_path,
-                const char* query_pts_shp_path);
-
         TravelTool(std::vector<OGRFeature*> roads,
                 std::vector<OGRFeature*> query_points);
 
         ~TravelTool();
-
-        double* QueryByCSV(const char* file_path);
 
     protected:
 
@@ -46,9 +38,6 @@ namespace OSMTools {
         void AddEdge(int way_idx, OGRPoint& from,
                 OGRPoint& to, double cost);
 
-        void BuildKdTree();
-
-        void InitFromCSV(const char* file_name);
 
     protected:
         GraphData graph;
@@ -62,6 +51,7 @@ namespace OSMTools {
         double** query_xy;
 
         std::vector<OGRFeature*> roads;
+
         std::vector<OGRFeature*> query_points;
 
 
@@ -98,17 +88,6 @@ namespace OSMTools {
         // final query nodes for dijkstra
         std::vector<int> query_nodes;
 
-
-
-
-
-        // node_id array
-        std::vector<std::string> node_ids;
-
-        // node_id_name : index
-        boost::unordered_map<std::string, int> node_id_dict;
-        // node_id_name : [(node_id_name, dist), (node_id_name, dist), ...]
-        boost::unordered_map<std::string, std::vector<nbr_cost> > edge_dict;
 
         boost::unordered_map<std::string, int> speed_limit_dict;
     };
