@@ -94,8 +94,30 @@ TravelTool::TravelTool(Roads* roads)
     kd_tree = new ANNkd_tree(xy, num_nodes, 2);
 }
 
+TravelTool::TravelTool(const char* road_shp_path,
+                       const char* query_pts_shp_path)
+{
+
+}
+
+TravelTool::TravelTool(std::vector<OGRFeature*> in_roads,
+        std::vector<OGRFeature*> in_query_points)
+    : TravelTool()
+{
+    roads = in_roads;
+    query_points = in_query_points;
+
+    BuildKdTreeFromRoads();
+}
+
 TravelTool::~TravelTool()
 {
+    if (query_xy) {
+        for (size_t i=0; i<query_points.size(); ++i) {
+            delete[] query_xy[i];
+        }
+        delete[] query_xy;
+    }
     free(vertex_array);
     free(edge_array);
     free(weight_array);
@@ -103,24 +125,251 @@ TravelTool::~TravelTool()
     if (kd_tree) delete kd_tree;
 }
 
-void TravelTool::InitCPUGPU()
+void TravelTool::BuildKdTreeFromRoads()
 {
+    if (roads.empty() == true) return;
+
+    size_t n_roads = roads.size();
+    OGRFeature* feature;
+    OGRGeometry* geom;
+    OGRLineString* line;
+    int i, j, n_pts;
+
+    for (i=0; i<n_roads; ++i) {
+        feature = roads[i];
+        geom = feature->GetGeometryRef();
+        std::vector<OGRPoint> e;
+        if (geom && geom->IsEmpty() == false) {
+            line = (OGRLineString*) geom;
+            n_pts = line->getNumPoints();
+            for (j=0; j<n_pts; ++j) {
+                OGRPoint pt;
+                line->getPoint(j, &pt);
+                RD_POINT rd_pt =
+                        std::make_pair(pt.getX(), pt.getY());
+                if (node_appearance.find(rd_pt) !=
+                        node_appearance.end()) {
+                    node_appearance[rd_pt] = 1;
+                } else {
+                    node_appearance[rd_pt] += 1;
+                }
+                // end points
+                if (j==0 || j == n_pts-1) {
+                    endpoint_dict[rd_pt].push_back(i);
+                }
+                e.push_back(pt); // todo: possible memory issue
+            }
+        }
+    }
+
+    int n_nodes = node_appearance.size();
+    double** xy = new double*[n_nodes];
+    i = 0;
+    boost::unordered_map<RD_POINT, int>::iterator it;
+    for (it=node_appearance.begin();
+            it != node_appearance.end(); ++it) {
+        RD_POINT pt = it->first;
+        node_array.push_back(pt);
+        xy[i] = new double[2];
+        xy[i][0] = pt.first;
+        xy[i][1] = pt.second;
+        i++;
+    }
+    kd_tree = new ANNkd_tree(xy, n_nodes, 2);
+
+    // using query points to find anchor points from roads
+    double eps = 0; // error bound
+    ANNidxArray nnIdx = new ANNidx[1];
+    ANNdistArray dists = new ANNdist[1];
+    int query_size = query_points.size(), q_id;
+    for (size_t i=0; i<query_size; ++i) {
+        feature = query_points[i];
+        geom = feature->GetGeometryRef();
+        OGRPoint* m_pt = (OGRPoint*)geom;
+        double* q_pt = new double[2];
+        q_pt[0] = m_pt->getY();
+        q_pt[1] = m_pt->getX();
+        kd_tree->annkSearch(q_pt, 1, nnIdx, dists, eps);
+        delete[] q_pt;
+        q_id = nnIdx[0];
+        anchor_points[ node_array[q_id] ] = true;
+        if (source_dict.find( q_id ) == source_dict.end()) {
+            query_nodes.push_back(q_id);
+        }
+        source_dict[q_id].push_back(
+                std::make_pair(i, dists[0]/20.0) );
+    }
+    delete[] nnIdx;
+    delete[] dists;
+    delete kd_tree;
+
+    // build graph
+    // remove circle way
+    for (i=0; i<edges.size(); ++i) {
+        n_pts = edges[i].size();
+        OGRPoint start = edges[i][0];
+        OGRPoint end = edges[i][n_pts-1];
+        if (start.Equals(&end)) {
+            removed_edges[i] = true;
+        }
+    }
+    // concat ways
+    for (i=0; i<edges.size(); ++i) {
+        if (removed_edges.find(i) != removed_edges.end()) {
+            // this edge has been merged with other edge already
+            // so skip
+            continue;
+        }
+        n_pts = edges[i].size();
+        OGRPoint start = edges[i][0];
+        OGRPoint end = edges[i][n_pts-1];
+        RD_POINT rd_start = std::make_pair(start.getX(), start.getY());
+        std::vector<int> conn_ways;
+        conn_ways = endpoint_dict[rd_start];
+        bool is_merged = false;
+        if (conn_ways.size() == 2) {
+            int w1 = i;
+            int w2 = conn_ways[0] == i ? conn_ways[1] : conn_ways[0];
+            MergeTwoWaysByStart(w1, w2);
+            removed_edges[w2] = true;
+            is_merged = true;
+        }
+        RD_POINT rd_end = std::make_pair(end.getX(), end.getY());
+        conn_ways = endpoint_dict[rd_end];
+        if (conn_ways.size() == 2) {
+            int w1 = i;
+            int w2 = conn_ways[0] == i ? conn_ways[1] : conn_ways[0];
+            MergeTwoWaysByEnd(w1, w2);
+            removed_edges[w2] = true;
+            is_merged = true;
+        }
+        if (is_merged) {
+            i--; // reprocessing current way since it's merged
+        }
+    }
+    // simplify ways
+    for (i=0; i<edges.size(); ++i) {
+        if (removed_edges.find(i) != removed_edges.end()) {
+            continue;
+        }
+        n_pts = edges[i].size();
+        double dist = 0;
+        int from, to;
+        for (j=edges[i].size()-2; j>=0; --j) {
+            OGRPoint pt = edges[i][j];
+            RD_POINT rd_pt = std::make_pair(pt.getX(), pt.getY());
+            if (j> 0 && node_appearance[rd_pt] == 1 &&
+                anchor_points.find(rd_pt) == anchor_points.end())
+            {
+                dist += GetArcDistance(pt, prev_pt);
+                edges[i].erase(edges[i].begin() + j);
+            } else {
+                // add {from, to, dist} to edge_dict
+                // edges[i][j] = from, edges[i][j+1] = to
+                dist += GetArcDistance(pt, prev_pt);
+                dist = 0; // reset dist to 0
+            }
+        }
+    }
+
+    vertex_array = (int*) malloc(num_nodes * sizeof(int));
+    edge_array = (int*)malloc(num_edges * sizeof(int));
+    weight_array = (int*)malloc(num_edges * sizeof(int));
+
+    graph.vertexCount = num_nodes;
+    graph.vertexArray = vertex_array;
+    graph.edgeCount = num_edges;
+    graph.edgeArray = edge_array;
+    graph.weightArray = weight_array;
+
+    size_t offset = 0, e_idx = 0, e_size;
+    double cost = 0;
+    for(unsigned int i = 0; i < graph.vertexCount; i++) {
+        graph.vertexArray[i] = offset;
+        std::string node = node_ids[i];
+        if (roads->edge_dict.find(node) == roads->edge_dict.end())
+            continue;
+        e_size = roads->edge_dict[node].size();
+        for (unsigned int j=0; j<e_size; j++) {
+            std::string nbr_id = roads->edge_dict[node][j].first;
+            cost = roads->edge_dict[node][j].second;
+            graph.edgeArray[e_idx] = node_id_dict[nbr_id];
+            graph.weightArray[e_idx++] = cost;
+        }
+        offset += e_size;
+    }
 }
 
-void TravelTool::GetTravelRoute(double from_lat, double from_lon, double to_lat, double to_lon) {
+void TravelTool::MergeTwoWaysByStart(int w1, int w2)
+{
+    std::vector<OGRPoint> e1 = edges[w1];
+    std::vector<OGRPoint> e2 = edges[w2];
+    OGRPoint start1 = e1[0];
+    OGRPoint start2 = e2[0];
+    OGRPoint end2 = e2[e2.size() -1];
 
+    if (start1.Equals(&start2)) {
+        // reverse w2, concat w1
+        for (size_t i=0; i < e2.size(); ++i) {
+            e1.insert(e1.begin(), e2[i]);
+        }
+    } else if (start1.Equals(&end2)) {
+        // w2 concat w1
+        for (size_t i=e2.size()-1; i >= 0; --i) {
+            e1.insert(e1.begin(), e2[i]);
+        }
+    }
+    RD_POINT rd_pt = std::make_pair(start1.getX(), start1.getY());
+    node_appearance[rd_pt]-=1;
 }
 
-void TravelTool::ComputeDistanceMatrix()
+void TravelTool::MergeTwoWaysByEnd(int w1, int w2)
 {
+    std::vector<OGRPoint> e1 = edges[w1];
+    std::vector<OGRPoint> e2 = edges[w2];
+    OGRPoint end1 = e1[e1.size()-1];
+    OGRPoint start2 = e2[0];
+    OGRPoint end2 = e2[e2.size() -1];
+
+    if (end1.Equals(&start2)) {
+        // w1, concat w2
+        for (size_t i=0; i < e2.size(); ++i) {
+            e1.push_back(e2[i]);
+        }
+    } else if (end1.Equals(&end2)) {
+        // w1 concat reversed w2
+        for (size_t i=e2.size()-1; i >= 0; --i) {
+            e1.push_back(e2[i]);
+        }
+    }
+    RD_POINT rd_pt = std::make_pair(end1.getX(), end1.getY());
+    node_appearance[rd_pt]-=1;
 }
 
-void TravelTool::BuildKdTree(int node_cnt, double** xy)
+void TravelTool::BuildKdTree()
 {
+    if (query_points.empty() == true) return;
+
+    int query_size = query_points.size();
+    query_xy = new double*[query_size];
+
+    OGRFeature* feature;
+    OGRGeometry* geom;
+    OGRPoint* pt;
+    for (size_t i=0; i<query_size; ++i) {
+        query_xy[i] = new double[2];
+        feature = query_points[i];
+        geom = feature->GetGeometryRef();
+        if (geom && geom->IsEmpty() == false) {
+            pt = (OGRPoint*)geom;
+            query_xy[i][0] = pt->getX();
+            query_xy[i][1] = pt->getY();
+        }
+    }
     if (kd_tree != 0) {
         delete kd_tree;
     }
-    kd_tree = new ANNkd_tree(xy, node_cnt, 2);
+    kd_tree = new ANNkd_tree(query_xy, query_size, 2);
 }
 
 void TravelTool::InitFromCSV(const char *file_name) {
@@ -170,7 +419,7 @@ void TravelTool::InitFromCSV(const char *file_name) {
 void TravelTool::InitFromTable(std::vector<std::string> &froms, std::vector<std::string> &tos,
                                std::vector<std::string> &highways, std::vector<std::string> &maxspeeds,
                                std::vector<std::string> &oneways, std::vector<double> &distances) {
-    
+
     size_t n_obs = froms.size();
     size_t node_idx = 0;
     double distance, sl, w;
@@ -216,10 +465,6 @@ void TravelTool::InitFromTable(std::vector<std::string> &froms, std::vector<std:
             edge_dict[to].push_back(std::make_pair(from,w));
         }
     }
-}
-
-double* TravelTool::Query(std::vector<double> lats, std::vector<double> lons) {
-    return 0;
 }
 
 double* TravelTool::QueryByCSV(const char *file_path) {
@@ -276,14 +521,12 @@ double* TravelTool::QueryByCSV(const char *file_path) {
     // create the OpenCL context on available GPU devices
     gpuContext = clCreateContextFromType(0, CL_DEVICE_TYPE_GPU, NULL, NULL, &errNum);
     if (errNum != CL_SUCCESS) {
-        has_gpus = true;
         printf("No GPU devices found.\n");
     }
 
     // Create an OpenCL context on available CPU devices
     cpuContext = clCreateContextFromType(0, CL_DEVICE_TYPE_CPU, NULL, NULL, &errNum);
     if (errNum != CL_SUCCESS) {
-        has_cpu = true;
         printf("No CPU devices found.\n");
     }
 
