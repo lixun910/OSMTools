@@ -82,7 +82,10 @@ cl_program loadAndBuildProgram( cl_context gpuContext, const char *fileName )
     cl_program program;
 
     // Load the OpenCL source code from the .cl file
-    std::ifstream kernelFile(fileName, std::ios::in);
+    char file_path[1024];
+    strncpy(file_path, cl_dir, 1024);
+    strcat(file_path, fileName);
+    std::ifstream kernelFile(file_path, std::ios::in);
     if (!kernelFile.is_open())
     {
         std::cerr << "Failed to open file for reading: " << fileName << std::endl;
@@ -522,7 +525,7 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
 
     int *maskArrayHost = (int*) malloc(sizeof(int) * graph->vertexCount);
 
-    for ( int i = 0 ; i < numResults; i++ )
+    for ( size_t i = 0 ; i < numResults; i++ )
     {
 
         errNum |= clSetKernelArg(initializeBuffersKernel, 3, sizeof(int), &sourceVertices[i]);
@@ -566,8 +569,10 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
         }
 
         // Copy the result back
+        size_t offset = i * (size_t)graph->vertexCount;
+    if (offset < 0) cout << offset << endl;
         errNum = clEnqueueReadBuffer(commandQueue, costArrayDevice, CL_FALSE, 0, sizeof(int) * graph->vertexCount,
-                                     &outResultCosts[i * graph->vertexCount], 0, NULL, &readDone);
+                                     &outResultCosts[offset], 0, NULL, &readDone);
         checkError(errNum, CL_SUCCESS);
         clWaitForEvents(1, &readDone);
         
@@ -646,7 +651,7 @@ void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVe
     // Divide the workload out per device
     int resultsPerDevice = numResults / deviceCount;
 
-    int offset = 0;
+    size_t offset = 0;
 
     for (unsigned int i = 0; i < deviceCount; i++)
     {
@@ -654,7 +659,7 @@ void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVe
         devicePlans[i].deviceId = getDev(gpuContext, i);;
         devicePlans[i].graph = graph;
         devicePlans[i].sourceVertices = &sourceVertices[offset];
-        devicePlans[i].outResultCosts = &outResultCosts[offset * graph->vertexCount];
+        devicePlans[i].outResultCosts = &outResultCosts[offset * (size_t)graph->vertexCount];
         devicePlans[i].numResults = resultsPerDevice;
 
         offset += resultsPerDevice;
@@ -710,10 +715,11 @@ void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVe
 /// \param numResults Should be the size of all three passed inarrays
 ///
 ///
-void runDijkstraMultiGPUandCPU( cl_context gpuContext, cl_context cpuContext, GraphData* graph,
+void runDijkstraMultiGPUandCPU( const char* dir, cl_context gpuContext, cl_context cpuContext, GraphData* graph,
                                 int *sourceVertices,
                                 int *outResultCosts, int numResults )
 {
+    strcpy(cl_dir, dir);
     float ratioCPUtoGPU = 0.5; // CPU seems to run it at 2.26X on GT120 GPU
 
     // Find out how many GPU's to compute on all available GPUs
@@ -752,7 +758,7 @@ void runDijkstraMultiGPUandCPU( cl_context gpuContext, cl_context cpuContext, Gr
         devicePlans[curDevice].deviceId = getDev(gpuContext, i);;
         devicePlans[curDevice].graph = graph;
         devicePlans[curDevice].sourceVertices = &sourceVertices[offset];
-        devicePlans[curDevice].outResultCosts = &outResultCosts[offset * graph->vertexCount];
+        devicePlans[curDevice].outResultCosts = &outResultCosts[(size_t)offset * (size_t)graph->vertexCount];
         devicePlans[curDevice].numResults = resultsPerGPU;
 
         offset += resultsPerGPU;
@@ -783,6 +789,13 @@ void runDijkstraMultiGPUandCPU( cl_context gpuContext, cl_context cpuContext, Gr
     free (devicePlans);
 }
 
+void runDijkstraCPUOnly( const char* dir, GraphData* graph,
+                               int *sourceVertices,
+                               int *outResultCosts, int numResults )
+{
+    strcpy(cl_dir, dir);
+
+}
 ///
 /// Check whether the mask array is empty.  This tells the algorithm whether
 /// it needs to continue running or not.
@@ -826,7 +839,7 @@ void runDijkstraRef( GraphData* graph, int *sourceVertices,
     int *updatingCostArray = new int[graph->vertexCount];
     int *maskArray = new int[graph->vertexCount];
 
-    for (int i = start; i <= end; i++)
+    for (size_t i = start; i <= end; i++)
     {
         // Initialize the buffer for this run
         for (int v = 0; v < graph->vertexCount; v++)
@@ -895,7 +908,7 @@ void runDijkstraRef( GraphData* graph, int *sourceVertices,
         }
 
         // Copy the result back
-        memcpy(&outResultCosts[i * graph->vertexCount], costArray, sizeof(int) * graph->vertexCount);
+        memcpy(&outResultCosts[i * (size_t)graph->vertexCount], costArray, sizeof(int) * graph->vertexCount);
     }
 
     // Free temporary computation buffers

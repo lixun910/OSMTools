@@ -2,7 +2,8 @@
 // Created by Xun Li on 12/22/18.
 //
 #include <boost/date_time/posix_time/posix_time.hpp>
-
+#include <wx/stdpaths.h>
+#include <wx/filename.h>
 #include "TravelTool.h"
 
 
@@ -21,47 +22,50 @@
 using namespace OSMTools;
 namespace pt = boost::posix_time;
 
-//boost::unordered_map<std::string, int> TravelTool::speed_limit_dict
-
 TravelTool::TravelTool()
 {
-    speed_limit_dict = {
-            {"road",32}, {"motorway", 96},
-            {"motorway_link", 48},
-            {"motorway_junction", 48},
-            {"trunk", 80},
-            {"trunk_link", 40},
-            {"primary", 48},
-            {"primary_link", 32},
-            {"secondary", 40},
-            {"secondary_link", 40},
-            {"tertiary", 32},
-            {"tertiary_link", 32},
-            {"residential", 24},
-            {"living_street", 16},
-            {"service", 16},
-            {"track", 32},
-            {"pedestrian", 3.2},
-            {"services", 3.2},
-            {"bus_guideway", 3.2},
-            {"path", 8},
-            {"cycleway", 16},
-            {"footway", 3.2},
-            {"bridleway", 3.2},
-            {"byway", 3.2},
-            {"steps", 0.16},
-            {"unclassified", 24},
-            {"lane", 16},
-            {"opposite_lane", 16},
-            {"opposite", 16},
-            {"grade1", 16}, {"grade2", 16}, {"grade3", 16}, {"grade4", 16}, {"grade5", 16}, {"roundabout", 40}
-    };
+
 }
 
 TravelTool::TravelTool(std::vector<OGRFeature*> in_roads,
         std::vector<OGRFeature*> in_query_points)
-    : TravelTool()
 {
+    speed_limit_dict["road"]=32;
+    speed_limit_dict["motorway"] = 96;
+    speed_limit_dict["motorway_link"] = 48;
+    speed_limit_dict["motorway_junction"] = 48;
+    speed_limit_dict["trunk"] = 80;
+    speed_limit_dict["trunk_link"] = 40;
+    speed_limit_dict["primary"] = 48;
+    speed_limit_dict["primary_link"] = 32;
+    speed_limit_dict["secondary"] = 40;
+    speed_limit_dict["secondary_link"] = 40;
+    speed_limit_dict["tertiary"] = 32;
+    speed_limit_dict["tertiary_link"] = 32;
+    speed_limit_dict["residential"] = 24;
+    speed_limit_dict["living_street"] = 16;
+    speed_limit_dict["service"] = 16;
+    speed_limit_dict["track"] = 32;
+    speed_limit_dict["pedestrian"] = 3.2;
+    speed_limit_dict["services"] = 3.2;
+    speed_limit_dict["bus_guideway"] = 3.2;
+    speed_limit_dict["path"] = 8;
+    speed_limit_dict["cycleway"] = 16;
+    speed_limit_dict["footway"] = 3.2;
+    speed_limit_dict["bridleway"] = 3.2;
+    speed_limit_dict["byway"] = 3.2;
+    speed_limit_dict["steps"] = 0.16;
+    speed_limit_dict["unclassified"] = 24;
+    speed_limit_dict["lane"] = 16;
+    speed_limit_dict["opposite_lane"] = 16;
+    speed_limit_dict["opposite"] = 16;
+    speed_limit_dict["grade1"] = 16;
+    speed_limit_dict["grade2"] = 16;
+    speed_limit_dict["grade3"] = 16;
+    speed_limit_dict["grade4"] = 16;
+    speed_limit_dict["grade5"] = 16;
+    speed_limit_dict["roundabout"] = 40;
+
     roads = in_roads;
     query_points = in_query_points;
 
@@ -77,8 +81,18 @@ TravelTool::~TravelTool()
    if (kd_tree) delete kd_tree;
 }
 
+wxString TravelTool::GetExeDir()
+{
+    wxString exePath = wxStandardPaths::Get().GetExecutablePath();
+    wxFileName exeFile(exePath);
+    wxString exeDir = exeFile.GetPathWithSep();
+    return exeDir;
+
+}
 void TravelTool::PreprocessRoads()
 {
+    pt::ptime startTimeGPUCPU = pt::microsec_clock::local_time();
+    
     if (roads.empty() == true) return;
 
     size_t n_roads = roads.size();
@@ -104,7 +118,7 @@ void TravelTool::PreprocessRoads()
                 if (nodes_dict.find(rd_pt) == nodes_dict.end()) {
                     nodes_dict[rd_pt] = node_count;
                     node_appearance[node_count] = 1;
-                    nodes.push_back(rd_pt);
+                    nodes.push_back(pt);
                     node_count ++;
                 } else {
                     idx = nodes_dict[rd_pt];
@@ -127,46 +141,51 @@ void TravelTool::PreprocessRoads()
     // create a kdtree using nodes in ways
     double** xy = new double*[node_count];
     for (i=0; i<node_count; ++i) {
-        RD_POINT pt = nodes[i];
+        OGRPoint pt = nodes[i];
         xy[i] = new double[2];
-        xy[i][0] = pt.first;
-        xy[i][1] = pt.second;
+        xy[i][0] = pt.getX();
+        xy[i][1] = pt.getY();
     }
     kd_tree = new ANNkd_tree(xy, node_count, 2);
-    for (i=0; i<node_count; ++i) delete[] xy[i];
-    delete[] xy;
 
     // using query points to find anchor points from roads
-    double eps = 0; // error bound
-    ANNidxArray nnIdx = new ANNidx[1];
-    ANNdistArray dists = new ANNdist[1];
-    int q_id, query_size = query_points.size();
+    double eps = 0.00000001; // error bound
+    ANN_DIST_TYPE = 2;
+
+    int anchor_cnt = 0, query_size = query_points.size();
     for (i=0; i<query_size; ++i) {
         feature = query_points[i];
         geom = feature->GetGeometryRef();
         OGRPoint* m_pt = (OGRPoint*)geom;
         double* q_pt = new double[2];
-        q_pt[0] = m_pt->getY();
-        q_pt[1] = m_pt->getX();
-        kd_tree->annkSearch(q_pt, 1, nnIdx, dists, eps);
-        delete[] q_pt;
-        q_id = nnIdx[0];
+        q_pt[0] = m_pt->getX();
+        q_pt[1] = m_pt->getY();
+        ANNidxArray nnIdx = new ANNidx[2];
+        ANNdistArray dists = new ANNdist[2];
+        kd_tree->annkSearch(q_pt, 2, nnIdx, dists, eps);
+        int q_id = nnIdx[0];
         anchor_points[q_id] = true;
         if (source_dict.find(q_id) == source_dict.end()) {
             query_nodes.push_back(q_id);
+            anchor_cnt++;
         }
         source_dict[q_id].push_back(
                 std::make_pair(i, dists[0]/20.0) );
+        delete[] q_pt;
+        delete[] nnIdx;
+        delete[] dists;
     }
-    delete[] nnIdx;
-    delete[] dists;
+
     delete kd_tree;
+    for (i=0; i<node_count; ++i) delete[] xy[i];
+    delete[] xy;
 
     // build graph
     // remove circle way
     int from, to;
     std::string highway, oneway, maxspeed;
-    double speed_limit = 40.0, length, cost;
+    double speed_limit = 20.0, length, cost;
+    oneway_dict.resize(edges.size(), false);
     for (i=0; i<edges.size(); ++i) {
         n_pts = edges[i].size();
         OGRPoint start = edges[i][0];
@@ -185,10 +204,10 @@ void TravelTool::PreprocessRoads()
             }
         } else {
             std::string sp_str = maxspeed.substr(0,2);
-            speed_limit = std::stoi(sp_str); // mile
+            speed_limit = atoi(sp_str.c_str()); // mile
             speed_limit *= 1.6; // km
         }
-        oneway_dict[i] = oneway != "yes" ? false : true;
+        oneway_dict[i] = std::strcmp(oneway.c_str(),"yes") == 0 ? true : false;
 
         for (j=0; j<n_pts-1; ++j) {
             start = edges[i][j];
@@ -225,9 +244,11 @@ void TravelTool::PreprocessRoads()
         if (conn_ways.size() == 2) { // two ways share node_idx (start)
             w1 = i;
             w2 = conn_ways[0] == i ? conn_ways[1] : conn_ways[0];
-            if (MergeTwoWaysByStart(w1, w2)) {
-                removed_edges[w2] = true;
-                is_merged = true;
+            if (removed_edges.find(w2) == removed_edges.end()) {
+                if (MergeTwoWaysByStart(w1, w2)) {
+                    removed_edges[w2] = true;
+                    is_merged = true;
+                }
             }
         }
 
@@ -240,9 +261,11 @@ void TravelTool::PreprocessRoads()
         if (conn_ways.size() == 2) { // tow ways share node_idx (end)
             w1 = i;
             w2 = conn_ways[0] == i ? conn_ways[1] : conn_ways[0];
-            if (MergeTwoWaysByEnd(w1, w2)) {
-                removed_edges[w2] = true;
-                is_merged = true;
+            if (removed_edges.find(w2) == removed_edges.end()) {
+                if (MergeTwoWaysByEnd(w1, w2)) {
+                    removed_edges[w2] = true;
+                    is_merged = true;
+                }
             }
         }
         if (is_merged) {
@@ -251,6 +274,7 @@ void TravelTool::PreprocessRoads()
             // and therefore its content has been updated
         }
     }
+    //SaveMergedRoads("/Users/xun/Desktop/merge.shp");
 
     // simplify ways
     for (i=0; i<edges.size(); ++i) {
@@ -287,18 +311,26 @@ void TravelTool::PreprocessRoads()
         }
     }
 
+    //SaveMergedRoads("/Users/xun/Desktop/simplified.shp");
+
     // re-index nodes and edges
     int valid_index = 0;
     boost::unordered_map<int, int> index_map;
+    boost::unordered_map<int, int> rev_index_map;
     for (i=0; i<node_count; ++i) {
         if (nodes_flag[i] == true) {
             index_map[valid_index] = i;
+            rev_index_map[i] = valid_index;
             valid_index ++;
         }
     }
 
     num_nodes = valid_index;
-    num_edges = edges_dict.size();
+    num_edges = 0;
+    boost::unordered_map<int, std::vector<std::pair<int, double> > >::iterator it;
+    for (it = edges_dict.begin(); it!= edges_dict.end(); ++it) {
+        num_edges += it->second.size();
+    }
 
     vertex_array = (int*) malloc(num_nodes * sizeof(int));
     edge_array = (int*)malloc(num_edges * sizeof(int));
@@ -318,7 +350,7 @@ void TravelTool::PreprocessRoads()
         std::vector<std::pair<int, double> > nbrs = edges_dict[node_idx];
 
         for (j=0; j<nbrs.size(); ++j) {
-            nbr_idx = index_map[ nbrs[j].first ];
+            nbr_idx = rev_index_map[ nbrs[j].first ];
             cost = nbrs[j].second;
             graph.edgeArray[e_idx] = nbr_idx;
             graph.weightArray[e_idx++] = cost;
@@ -327,7 +359,9 @@ void TravelTool::PreprocessRoads()
         offset += nbrs.size();
     }
 
-    int *results = (int*) malloc(sizeof(int) * query_size * graph.vertexCount);
+    query_size = query_nodes.size();
+    size_t results_mem = sizeof(int) * (size_t)query_size * (size_t)graph.vertexCount;
+    int *results = (int*) malloc(results_mem);
     int *sourceVertArray = (int*) malloc(sizeof(int) * query_size);
     for (size_t i=0; i<query_size; i++) sourceVertArray[i] = query_nodes[i];
 
@@ -360,9 +394,13 @@ void TravelTool::PreprocessRoads()
         printf("No CPU devices found.\n");
     }
 
-    pt::ptime startTimeGPUCPU = pt::microsec_clock::local_time();
-    runDijkstraMultiGPUandCPU(gpuContext, cpuContext, &graph, sourceVertArray, results, query_size);
+    char cl_dir[1024];
+    wxString current_dir = GetExeDir();
+    strncpy(cl_dir, (const char*)current_dir.mb_str(wxConvUTF8), 1023);
 
+
+    runDijkstraMultiGPUandCPU(cl_dir, gpuContext, cpuContext, &graph, sourceVertArray, results, query_size);
+    //runDijkstraMT(&graph, sourceVertArray, results, query_size);
     pt::time_duration timeGPUCPU = pt::microsec_clock::local_time() - startTimeGPUCPU;
     printf("\nrunDijkstra - Multi GPU and CPU Time: %f s\n", (float)timeGPUCPU.total_milliseconds() / 1000.0f);
 
@@ -391,8 +429,8 @@ void TravelTool::AddEdge(int way_idx, OGRPoint& from, OGRPoint& to, double cost)
 
 bool TravelTool::MergeTwoWaysByStart(int w1, int w2)
 {
-    std::vector<OGRPoint> e1 = edges[w1];
-    std::vector<OGRPoint> e2 = edges[w2];
+    std::vector<OGRPoint>& e1 = edges[w1];
+    std::vector<OGRPoint>& e2 = edges[w2];
     OGRPoint start1 = e1[0];
     OGRPoint start2 = e2[0];
     OGRPoint end2 = e2[e2.size() -1];
@@ -400,12 +438,12 @@ bool TravelTool::MergeTwoWaysByStart(int w1, int w2)
     if (start1.Equals(&start2)) {
         // reverse w2, concat w1
         if (oneway_dict[w2]) return false;
-        for (size_t i=0; i < e2.size(); ++i) {
+        for (int i=1; i < e2.size(); ++i) {
             e1.insert(e1.begin(), e2[i]);
         }
     } else if (start1.Equals(&end2)) {
         // w2 concat w1
-        for (size_t i=e2.size()-1; i >= 0; --i) {
+        for (int i=e2.size()-2; i >= 0; --i) {
             e1.insert(e1.begin(), e2[i]);
         }
     } else {
@@ -419,21 +457,21 @@ bool TravelTool::MergeTwoWaysByStart(int w1, int w2)
 
 bool TravelTool::MergeTwoWaysByEnd(int w1, int w2)
 {
-    std::vector<OGRPoint> e1 = edges[w1];
-    std::vector<OGRPoint> e2 = edges[w2];
+    std::vector<OGRPoint>& e1 = edges[w1];
+    std::vector<OGRPoint>& e2 = edges[w2];
     OGRPoint end1 = e1[e1.size()-1];
     OGRPoint start2 = e2[0];
     OGRPoint end2 = e2[e2.size() -1];
 
     if (end1.Equals(&start2)) {
         // w1, concat w2
-        for (size_t i=0; i < e2.size(); ++i) {
+        for (int i=1; i < e2.size(); ++i) {
             e1.push_back(e2[i]);
         }
     } else if (end1.Equals(&end2)) {
         // w1 concat reversed w2
         if (oneway_dict[w2]) return false;
-        for (size_t i=e2.size()-1; i >= 0; --i) {
+        for (int i=e2.size()-2; i >= 0; --i) {
             e1.push_back(e2[i]);
         }
     } else {
@@ -466,3 +504,61 @@ double TravelTool::ComputeArcDist(OGRPoint& from, OGRPoint& to)
     return 2 * EARTH_RADIUS * asin(sqrt(a+b));
 }
 
+void TravelTool::SaveMergedRoads(const char* shp_file_name)
+{
+    const char *pszDriverName = "ESRI Shapefile";
+    GDALDriver *poDriver;
+    GDALAllRegister();
+    poDriver = GetGDALDriverManager()->GetDriverByName(pszDriverName );
+    if( poDriver == NULL ) {
+        printf( "%s driver not available.\n", pszDriverName );
+        return;
+    }
+    GDALDataset *poDS;
+    poDS = poDriver->Create(shp_file_name, 0, 0, 0, GDT_Unknown, NULL );
+    if( poDS == NULL ) {
+        printf( "Creation of output file failed.\n" );
+        return;
+    }
+    OGRLayer *poLayer;
+    poLayer = poDS->CreateLayer("roads", NULL, wkbLineString, NULL );
+    if( poLayer == NULL ) {
+        printf( "Layer creation failed.\n" );
+        GDALClose( poDS );
+        return;
+    }
+    // wayid, highway, name, county, oneway, maxspeed, length,
+    const char* prop_names[255] = {"wayid", "highway", "name", "county", "oneway", "maxspeed"};
+    for (size_t i=0; i<6; ++i) {
+        OGRFieldDefn oField(prop_names[i], OFTString );
+        oField.SetWidth(32);
+        if( poLayer->CreateField( &oField ) != OGRERR_NONE ) {
+            printf( "Creating Name field failed.\n" );
+            GDALClose( poDS );
+            return;
+        }
+    }
+    for (size_t i=0; i<edges.size(); ++i) {
+        if (removed_edges.find(i) != removed_edges.end()) {
+            continue;
+        }
+        OGRFeature *poFeature;
+        poFeature = OGRFeature::CreateFeature( poLayer->GetLayerDefn() );
+        for (size_t c=0; c<6; ++c) {
+            poFeature->SetField(c, roads[i]->GetFieldAsString(c));
+        }
+        OGRLineString line;
+        for (size_t j=0; j<edges[i].size(); ++j) {
+            OGRPoint pt = edges[i][j];
+            line.addPoint(&pt);
+        }
+        poFeature->SetGeometry(&line);
+        if( poLayer->CreateFeature( poFeature ) != OGRERR_NONE ) {
+            printf( "Failed to create feature in shapefile.\n" );
+            GDALClose( poDS );
+            return;
+        }
+        OGRFeature::DestroyFeature( poFeature );
+    }
+    GDALClose( poDS );
+}

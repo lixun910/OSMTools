@@ -6,8 +6,11 @@
 #define OSMTOOLSPROJECT_TRAVELTOOL_H
 
 #include <vector>
+#include <map>
 #include <boost/unordered_map.hpp>
-#include <ANN/ANN.h>
+#include <wx/wx.h>
+
+#include "../kNN/ANN/ANN.h"
 #include <ogrsf_frmts.h>
 
 #include "oclDijkstraKernel.h"
@@ -38,6 +41,9 @@ namespace OSMTools {
         void AddEdge(int way_idx, OGRPoint& from,
                 OGRPoint& to, double cost);
 
+        void SaveMergedRoads(const char* shp_file_name);
+
+        wxString GetExeDir();
 
     protected:
         GraphData graph;
@@ -64,7 +70,7 @@ namespace OSMTools {
         boost::unordered_map<int,
             std::vector<std::pair<int, double> > > edges_dict;
 
-        std::vector<RD_POINT> nodes;
+        std::vector<OGRPoint> nodes;
 
         std::vector<bool> nodes_flag;
 
@@ -90,6 +96,7 @@ namespace OSMTools {
 
 
         boost::unordered_map<std::string, int> speed_limit_dict;
+
     };
 
 }

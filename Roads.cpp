@@ -1,6 +1,7 @@
 //
 // Created by Xun Li on 12/20/18.
 //
+#include <stdlib.h>
 #include <iostream>
 #include <sstream>
 #include <fstream>
@@ -191,7 +192,7 @@ void Roads::ReadOSMNodes(const char *file_name)
             if (line.find("lat") != std::string::npos) {
                 tmp = GetValueFromLine(line, false);
                 if (!tmp.empty()) {
-                    lat_arr.push_back(std::stod(tmp));
+                    lat_arr.push_back(std::atof(tmp.c_str()));
                     state = 3;
                 }
             }
@@ -200,7 +201,7 @@ void Roads::ReadOSMNodes(const char *file_name)
             if (line.find("lon") != std::string::npos) {
                 tmp = GetValueFromLine(line, false);
                 if (!tmp.empty()) {
-                    lon_arr.push_back(std::stod(tmp));
+                    lon_arr.push_back(std::atof(tmp.c_str()));
                     state = 4;
                 }
             }

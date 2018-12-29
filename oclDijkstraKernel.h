@@ -34,6 +34,8 @@
     #include <CL/cl.h>
 #endif
 
+static char cl_dir[1024];
+
 //  Function prototypes
 //
 bool maskArrayEmpty(int *maskArray, int count);
@@ -203,7 +205,7 @@ void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVe
 /// \param numResults Should be the size of all three passed inarrays
 ///
 ///
-void runDijkstraMultiGPUandCPU( cl_context gpuContext, cl_context cpuContext, GraphData* graph,
+void runDijkstraMultiGPUandCPU( const char* cl_dir, cl_context gpuContext, cl_context cpuContext, GraphData* graph,
                                 int *sourceVertices, int *outResultCosts, int numResults );
 
 
