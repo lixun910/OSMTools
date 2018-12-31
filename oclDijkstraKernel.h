@@ -77,7 +77,7 @@ typedef struct
     int edgeCount;
 
     // (W) Weight array
-    int *weightArray;
+    float *weightArray;
 
 } GraphData;
 
@@ -102,7 +102,7 @@ typedef struct
     int *endVertices;
     
     // Results of processing
-    int *outResultCosts;
+    float *outResultCosts;
     
     // Number of results
     int numResults;
@@ -131,7 +131,7 @@ typedef struct
 /// \param numResults Should be the size of all three passed inarrays
 ///
 void runDijkstraOpenCL( GraphData* graph, int *sourceVertices,
-                        int *outResultCosts, int numResults );
+                        float *outResultCosts, int numResults );
 
 ///
 /// Run Dijkstra's shortest path on the GraphData provided to this function.  This
@@ -156,7 +156,7 @@ void runDijkstraOpenCL( GraphData* graph, int *sourceVertices,
 /// \param numResults Should be the size of all three passed inarrays
 ///
 void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
-                  int *sourceVertices, int *outResultCosts, int numResults );
+                  int *sourceVertices, float *outResultCosts, int numResults );
 
 
 ///
@@ -181,7 +181,7 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
 ///
 ///
 void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVertices,
-                          int *outResultCosts, int numResults );
+                          float *outResultCosts, int numResults );
 
 ///
 /// Run Dijkstra's shortest path on the GraphData provided to this function.  This
@@ -206,7 +206,7 @@ void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVe
 ///
 ///
 void runDijkstraMultiGPUandCPU( const char* cl_dir, cl_context gpuContext, cl_context cpuContext, GraphData* graph,
-                                int *sourceVertices, int *outResultCosts, int numResults );
+                                int *sourceVertices, float *outResultCosts, int numResults );
 
 
 ///
@@ -227,9 +227,9 @@ void runDijkstraMultiGPUandCPU( const char* cl_dir, cl_context gpuContext, cl_co
 /// \param numResults Should be the size of all three passed inarrays
 ///
 void runDijkstraMT ( GraphData* graph, int *sourceVertices,
-                     int *outResultCosts, int numResults );
+                     float *outResultCosts, int numResults );
 
 void runDijkstraRef( GraphData* graph, int *sourceVertices,
-                     int *outResultCosts, int start, int end);
+                     float *outResultCosts, int start, int end);
 
 #endif // DIJKSTRA_KERNEL_H

@@ -53,7 +53,7 @@ namespace OSMTools {
         int  num_edges;
         int* vertex_array;
         int* edge_array;
-        int* weight_array;
+        float* weight_array;
         double** query_xy;
 
         std::vector<OGRFeature*> roads;

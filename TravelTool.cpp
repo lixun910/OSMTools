@@ -77,8 +77,6 @@ TravelTool::~TravelTool()
     free(vertex_array);
     free(edge_array);
     free(weight_array);
-
-   if (kd_tree) delete kd_tree;
 }
 
 wxString TravelTool::GetExeDir()
@@ -334,7 +332,7 @@ void TravelTool::PreprocessRoads()
 
     vertex_array = (int*) malloc(num_nodes * sizeof(int));
     edge_array = (int*)malloc(num_edges * sizeof(int));
-    weight_array = (int*)malloc(num_edges * sizeof(int));
+    weight_array = (float*)malloc(num_edges * sizeof(float));
 
     graph.vertexCount = num_nodes;
     graph.vertexArray = vertex_array;
@@ -361,7 +359,7 @@ void TravelTool::PreprocessRoads()
 
     query_size = query_nodes.size();
     size_t results_mem = sizeof(int) * (size_t)query_size * (size_t)graph.vertexCount;
-    int *results = (int*) malloc(results_mem);
+    float *results = (float*) malloc(results_mem);
     int *sourceVertArray = (int*) malloc(sizeof(int) * query_size);
     for (size_t i=0; i<query_size; i++) sourceVertArray[i] = query_nodes[i];
 

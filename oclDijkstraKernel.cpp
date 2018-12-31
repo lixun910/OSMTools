@@ -143,7 +143,7 @@ void allocateOCLBuffers(cl_context gpuContext, cl_command_queue commandQueue, Gr
     checkError(errNum, CL_SUCCESS);
 
     hostWeightArrayBuffer = clCreateBuffer(gpuContext, CL_MEM_COPY_HOST_PTR | CL_MEM_ALLOC_HOST_PTR,
-                                           sizeof(int) * graph->edgeCount, graph->weightArray, &errNum);
+                                           sizeof(float) * graph->edgeCount, graph->weightArray, &errNum);
     checkError(errNum, CL_SUCCESS);
 
     // Now create all of the GPU buffers
@@ -151,13 +151,13 @@ void allocateOCLBuffers(cl_context gpuContext, cl_command_queue commandQueue, Gr
     checkError(errNum, CL_SUCCESS);
     *edgeArrayDevice = clCreateBuffer(gpuContext, CL_MEM_READ_ONLY, sizeof(int) * graph->edgeCount, NULL, &errNum);
     checkError(errNum, CL_SUCCESS);
-    *weightArrayDevice = clCreateBuffer(gpuContext, CL_MEM_READ_ONLY, sizeof(int) * graph->edgeCount, NULL, &errNum);
+    *weightArrayDevice = clCreateBuffer(gpuContext, CL_MEM_READ_ONLY, sizeof(float) * graph->edgeCount, NULL, &errNum);
     checkError(errNum, CL_SUCCESS);
     *maskArrayDevice = clCreateBuffer(gpuContext, CL_MEM_READ_WRITE, sizeof(int) * globalWorkSize, NULL, &errNum);
     checkError(errNum, CL_SUCCESS);
-    *costArrayDevice = clCreateBuffer(gpuContext, CL_MEM_READ_WRITE, sizeof(int) * globalWorkSize, NULL, &errNum);
+    *costArrayDevice = clCreateBuffer(gpuContext, CL_MEM_READ_WRITE, sizeof(float) * globalWorkSize, NULL, &errNum);
     checkError(errNum, CL_SUCCESS);
-    *updatingCostArrayDevice = clCreateBuffer(gpuContext, CL_MEM_READ_WRITE, sizeof(int) * globalWorkSize, NULL, &errNum);
+    *updatingCostArrayDevice = clCreateBuffer(gpuContext, CL_MEM_READ_WRITE, sizeof(float) * globalWorkSize, NULL, &errNum);
     checkError(errNum, CL_SUCCESS);
 
     // Now queue up the data to be copied to the device
@@ -360,7 +360,7 @@ int roundWorkSizeUp(int groupSize, int globalSize)
 /// \param numResults Should be the size of all three passed inarrays
 ///
 void runDijkstraOpenCL( GraphData* graph, int *sourceVertices,
-                        int *outResultCosts, int numResults )
+                        float *outResultCosts, int numResults )
 {
     // See what kind of devices are available
     cl_int errNum;
@@ -442,7 +442,7 @@ void runDijkstraOpenCL( GraphData* graph, int *sourceVertices,
 /// \param numResults Should be the size of all three passed inarrays
 ///
 void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
-                  int *sourceVertices, int *outResultCosts, int numResults)
+                  int *sourceVertices, float *outResultCosts, int numResults)
 {
     // Create command queue
     cl_int errNum;
@@ -570,8 +570,7 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
 
         // Copy the result back
         size_t offset = i * (size_t)graph->vertexCount;
-    if (offset < 0) cout << offset << endl;
-        errNum = clEnqueueReadBuffer(commandQueue, costArrayDevice, CL_FALSE, 0, sizeof(int) * graph->vertexCount,
+        errNum = clEnqueueReadBuffer(commandQueue, costArrayDevice, CL_FALSE, 0, sizeof(float) * graph->vertexCount,
                                      &outResultCosts[offset], 0, NULL, &readDone);
         checkError(errNum, CL_SUCCESS);
         clWaitForEvents(1, &readDone);
@@ -625,7 +624,7 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
 ///
 ///
 void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVertices,
-                          int *outResultCosts, int numResults )
+                          float *outResultCosts, int numResults )
 {
 
     // Find out how many GPU's to compute on all available GPUs
@@ -717,10 +716,10 @@ void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVe
 ///
 void runDijkstraMultiGPUandCPU( const char* dir, cl_context gpuContext, cl_context cpuContext, GraphData* graph,
                                 int *sourceVertices,
-                                int *outResultCosts, int numResults )
+                                float *outResultCosts, int numResults )
 {
     strcpy(cl_dir, dir);
-    float ratioCPUtoGPU = 0.5; // CPU seems to run it at 2.26X on GT120 GPU
+    float ratioCPUtoGPU = 0.4; // CPU seems to run it at 2.26X on GT120 GPU
 
     // Find out how many GPU's to compute on all available GPUs
     cl_int errNum;
@@ -791,7 +790,7 @@ void runDijkstraMultiGPUandCPU( const char* dir, cl_context gpuContext, cl_conte
 
 void runDijkstraCPUOnly( const char* dir, GraphData* graph,
                                int *sourceVertices,
-                               int *outResultCosts, int numResults )
+                               float *outResultCosts, int numResults )
 {
     strcpy(cl_dir, dir);
 
@@ -831,7 +830,7 @@ bool maskArrayEmpty(int *maskArray, int count)
 /// \param numResults Should be the size of all three passed inarrays
 ///
 void runDijkstraRef( GraphData* graph, int *sourceVertices,
-                     int *outResultCosts, int start, int end)
+                     float *outResultCosts, int start, int end)
 {
 
     // Create the arrays needed for processing the algorithm
@@ -853,8 +852,8 @@ void runDijkstraRef( GraphData* graph, int *sourceVertices,
             else
             {
                 maskArray[v] = 0;
-                costArray[v] = (int)FLT_MAX;
-                updatingCostArray[v] = (int)FLT_MAX;
+                costArray[v] = FLT_MAX;
+                updatingCostArray[v] = FLT_MAX;
             }
         }
 
@@ -908,7 +907,7 @@ void runDijkstraRef( GraphData* graph, int *sourceVertices,
         }
 
         // Copy the result back
-        memcpy(&outResultCosts[i * (size_t)graph->vertexCount], costArray, sizeof(int) * graph->vertexCount);
+        memcpy(&outResultCosts[i * (size_t)graph->vertexCount], costArray, sizeof(float) * graph->vertexCount);
     }
 
     // Free temporary computation buffers
@@ -918,7 +917,7 @@ void runDijkstraRef( GraphData* graph, int *sourceVertices,
 }
 
 void runDijkstraMT(GraphData* graph, int *sourceVertices,
-                   int *outResultCosts, int numResults )
+                   float *outResultCosts, int numResults )
 {
     cout << "CPU: Computing '" << numResults << "' results." << endl;
     unsigned int nCPUs = boost::thread::hardware_concurrency();
@@ -946,7 +945,7 @@ void runDijkstraMT(GraphData* graph, int *sourceVertices,
         }
 
         bthread[i] = new boost::thread(boost::bind(&runDijkstraRef, (GraphData*) graph,
-                (int*)sourceVertices, (int*)outResultCosts, a, b));
+                (int*)sourceVertices, (float*)outResultCosts, a, b));
     }
     for (unsigned int i = 0; i < tot_threads; i++) {
         bthread[i]->join();
