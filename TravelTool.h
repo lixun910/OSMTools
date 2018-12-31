@@ -43,6 +43,12 @@ namespace OSMTools {
 
         void SaveMergedRoads(const char* shp_file_name);
 
+        void SaveGraphToShapefile(const char* shp_file_name);
+        
+        void SaveQueryNodes(const char* shp_file_name);
+        
+        int GetValidEdgeId(int idx);
+        
         wxString GetExeDir();
 
         bool SaveQueryResults(const char* file_path,
@@ -69,7 +75,8 @@ namespace OSMTools {
 
         std::vector<bool> oneway_dict;
 
-        boost::unordered_map<int, bool> removed_edges;
+        // removed edge: concat to edge
+        boost::unordered_map<int, int> removed_edges;
 
         boost::unordered_map<int,
             std::vector<std::pair<int, double> > > edges_dict;

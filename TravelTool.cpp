@@ -197,7 +197,7 @@ void TravelTool::PreprocessRoads()
         OGRPoint start = edges[i][0];
         OGRPoint end = edges[i][n_pts-1];
         if (start.Equals(&end)) {
-            removed_edges[i] = true;
+            removed_edges[i] = -1; // means circle
         }
         // compute pair_cost
         feature = roads[i];
@@ -230,7 +230,8 @@ void TravelTool::PreprocessRoads()
             }
         }
     }
-
+    //SaveMergedRoads("/Users/xun/Desktop/no_circle.shp");
+    
     // concat ways
     int node_idx, w1, w2;
     bool is_merged;
@@ -249,10 +250,28 @@ void TravelTool::PreprocessRoads()
         is_merged = false;
         if (conn_ways.size() == 2) { // two ways share node_idx (start)
             w1 = i;
-            w2 = conn_ways[0] == i ? conn_ways[1] : conn_ways[0];
-            if (removed_edges.find(w2) == removed_edges.end()) {
+            bool flag = true;
+            if (conn_ways[0] == w1) {
+                w2 = conn_ways[1];
+                w2 = GetValidEdgeId(w2);
+            } else if (conn_ways[1] == w1) {
+                w2 = conn_ways[0];
+                w2 = GetValidEdgeId(w2);
+            } else {
+                int c1 = GetValidEdgeId(conn_ways[0]);
+                int c2 = GetValidEdgeId(conn_ways[1]);
+                if (c1 == w1) {
+                    w2 = c2;
+                } else if (c2 == w1) {
+                    w2 = c1;
+                } else {
+                    flag = false;
+                }
+            }
+            
+            if (flag && w1 != w2 && removed_edges.find(w2) == removed_edges.end()) {
                 if (MergeTwoWaysByStart(w1, w2)) {
-                    removed_edges[w2] = true;
+                    removed_edges[w2] = w1;
                     is_merged = true;
                 }
             }
@@ -266,10 +285,28 @@ void TravelTool::PreprocessRoads()
         conn_ways = endpoint_dict[node_idx];
         if (conn_ways.size() == 2) { // tow ways share node_idx (end)
             w1 = i;
-            w2 = conn_ways[0] == i ? conn_ways[1] : conn_ways[0];
-            if (removed_edges.find(w2) == removed_edges.end()) {
+            bool flag = true;
+            if (conn_ways[0] == w1) {
+                w2 = conn_ways[1];
+                w2 = GetValidEdgeId(w2);
+            } else if (conn_ways[1] == w1) {
+                w2 = conn_ways[0];
+                w2 = GetValidEdgeId(w2);
+            } else {
+                int c1 = GetValidEdgeId(conn_ways[0]);
+                int c2 = GetValidEdgeId(conn_ways[1]);
+                if (c1 == w1) {
+                    w2 = c2;
+                } else if (c2 == w1) {
+                    w2 = c1;
+                } else {
+                    flag = false;
+                }
+            }
+            
+            if (flag && w1 != w2 && removed_edges.find(w2) == removed_edges.end()) {
                 if (MergeTwoWaysByEnd(w1, w2)) {
-                    removed_edges[w2] = true;
+                    removed_edges[w2] = w1;
                     is_merged = true;
                 }
             }
@@ -318,7 +355,9 @@ void TravelTool::PreprocessRoads()
     }
 
     //SaveMergedRoads("/Users/xun/Desktop/simplified.shp");
-
+    //SaveGraphToShapefile("/Users/xun/Desktop/graph.shp");
+    //SaveQueryNodes("/Users/xun/Desktop/query.shp");
+    
     // re-index nodes and edges
     int valid_index = 0;
     boost::unordered_map<int, int> index_map; // new idx : original idx
@@ -427,8 +466,12 @@ void TravelTool::PreprocessRoads()
     
     pt::ptime saveTime = pt::microsec_clock::local_time();
     
-    SaveQueryResults("/Users/xunli/Desktop/out.bin", num_nodes, results,
-                     query_to_node);
+    //SaveQueryResults("/Users/xunli/Desktop/out.bin", num_nodes, results,
+    //                 query_to_node);
+    FILE * fp;
+    fp = fopen("/Users/xunli/Desktop/out.bin", "wb");
+    fwrite(results,sizeof(int), (size_t)query_size * (size_t)graph.vertexCount, fp);
+    fclose(fp);
     
     pt::time_duration timeSave = pt::microsec_clock::local_time() - saveTime;
     printf("\nrunDijkstra - Save Time: %f s\n", (float)timeSave.total_milliseconds() / 1000.0f);
@@ -439,6 +482,17 @@ void TravelTool::PreprocessRoads()
     
     free(sourceVertArray);
     free(results);
+}
+
+int TravelTool::GetValidEdgeId(int idx) {
+    while (removed_edges.find(idx) != removed_edges.end()) {
+        if (idx != removed_edges[idx]) {
+            idx = removed_edges[idx];
+        } else {
+            break;
+        }
+    }
+    return idx;
 }
 
 bool TravelTool::SaveQueryResults(const char* file_path,
@@ -525,6 +579,11 @@ bool TravelTool::MergeTwoWaysByStart(int w1, int w2)
     RD_POINT rd_pt = std::make_pair(start1.getX(), start1.getY());
     int node_idx = nodes_dict[rd_pt];
     node_appearance[node_idx] -= 1;
+    
+    //OGRPoint left = e1[0];
+    //OGRPoint right = e1[e1.size() -1];
+    //int left_idx = nodes_dict[std::make_pair(left.getX(), left.getY())];
+    //int right_idx = nodes_dict[std::make_pair(right.getX(), right.getY())];
     return true;
 }
 
@@ -626,6 +685,130 @@ void TravelTool::SaveMergedRoads(const char* shp_file_name)
             line.addPoint(&pt);
         }
         poFeature->SetGeometry(&line);
+        if( poLayer->CreateFeature( poFeature ) != OGRERR_NONE ) {
+            printf( "Failed to create feature in shapefile.\n" );
+            GDALClose( poDS );
+            return;
+        }
+        OGRFeature::DestroyFeature( poFeature );
+    }
+    GDALClose( poDS );
+}
+
+void TravelTool::SaveGraphToShapefile(const char* shp_file_name)
+{
+    const char *pszDriverName = "ESRI Shapefile";
+    GDALDriver *poDriver;
+    GDALAllRegister();
+    poDriver = GetGDALDriverManager()->GetDriverByName(pszDriverName );
+    if( poDriver == NULL ) {
+        printf( "%s driver not available.\n", pszDriverName );
+        return;
+    }
+    GDALDataset *poDS;
+    poDS = poDriver->Create(shp_file_name, 0, 0, 0, GDT_Unknown, NULL );
+    if( poDS == NULL ) {
+        printf( "Creation of output file failed.\n" );
+        return;
+    }
+    OGRLayer *poLayer;
+    poLayer = poDS->CreateLayer("roads", NULL, wkbLineString, NULL );
+    if( poLayer == NULL ) {
+        printf( "Layer creation failed.\n" );
+        GDALClose( poDS );
+        return;
+    }
+    OGRFieldDefn oField("from", OFTInteger );
+    oField.SetWidth(32);
+    if( poLayer->CreateField( &oField ) != OGRERR_NONE ) {
+        printf( "Creating Name field failed.\n" );
+        GDALClose( poDS );
+        return;
+    }
+    OGRFieldDefn oField1("to", OFTInteger );
+    if( poLayer->CreateField( &oField1 ) != OGRERR_NONE ) {
+        printf( "Creating Name field failed.\n" );
+        GDALClose( poDS );
+        return;
+    }
+    OGRFieldDefn oField2("cost", OFTReal );
+    if( poLayer->CreateField( &oField2 ) != OGRERR_NONE ) {
+        printf( "Creating Name field failed.\n" );
+        GDALClose( poDS );
+        return;
+    }
+    
+    boost::unordered_map<int,
+    std::vector<std::pair<int, double> > >::iterator it;
+    for (it=edges_dict.begin(); it!=edges_dict.end(); ++it) {
+        int from_idx = it->first;
+        OGRPoint from_pt = nodes[from_idx];
+        std::vector<std::pair<int, double> > nbrs = it->second;
+        for (size_t i=0; i<nbrs.size(); ++i) {
+            int to_idx = nbrs[i].first;
+            double cost = nbrs[i].second;
+            OGRFeature *poFeature;
+            poFeature = OGRFeature::CreateFeature( poLayer->GetLayerDefn() );
+            poFeature->SetField(0, from_idx);
+            poFeature->SetField(1, to_idx);
+            poFeature->SetField(2, cost);
+            OGRLineString line;
+            OGRPoint to_pt = nodes[to_idx];
+            line.addPoint(&from_pt);
+            line.addPoint(&to_pt);
+            poFeature->SetGeometry(&line);
+            if( poLayer->CreateFeature( poFeature ) != OGRERR_NONE ) {
+                printf( "Failed to create feature in shapefile.\n" );
+                GDALClose( poDS );
+                return;
+            }
+            OGRFeature::DestroyFeature( poFeature );
+        }
+    }
+    GDALClose( poDS );
+}
+
+void TravelTool::SaveQueryNodes(const char* shp_file_name)
+{
+    const char *pszDriverName = "ESRI Shapefile";
+    GDALDriver *poDriver;
+    GDALAllRegister();
+    poDriver = GetGDALDriverManager()->GetDriverByName(pszDriverName );
+    if( poDriver == NULL ) {
+        printf( "%s driver not available.\n", pszDriverName );
+        return;
+    }
+    GDALDataset *poDS;
+    poDS = poDriver->Create(shp_file_name, 0, 0, 0, GDT_Unknown, NULL );
+    if( poDS == NULL ) {
+        printf( "Creation of output file failed.\n" );
+        return;
+    }
+    OGRLayer *poLayer;
+    poLayer = poDS->CreateLayer("roads", NULL, wkbPoint, NULL );
+    if( poLayer == NULL ) {
+        printf( "Layer creation failed.\n" );
+        GDALClose( poDS );
+        return;
+    }
+    OGRFieldDefn oField("from", OFTInteger );
+    oField.SetWidth(32);
+    if( poLayer->CreateField( &oField ) != OGRERR_NONE ) {
+        printf( "Creating Name field failed.\n" );
+        GDALClose( poDS );
+        return;
+    }
+    
+    for (size_t i=0; i<query_nodes.size(); ++i) {
+        int from_idx = query_nodes[i];
+        OGRPoint from_pt = nodes[from_idx];
+        
+        OGRFeature *poFeature;
+        poFeature = OGRFeature::CreateFeature( poLayer->GetLayerDefn() );
+        poFeature->SetField(0, from_idx);
+        
+        
+        poFeature->SetGeometry(&from_pt);
         if( poLayer->CreateFeature( poFeature ) != OGRERR_NONE ) {
             printf( "Failed to create feature in shapefile.\n" );
             GDALClose( poDS );
