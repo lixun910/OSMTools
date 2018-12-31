@@ -570,15 +570,10 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
 
         // Copy the result back
         size_t offset = i * (size_t)graph->vertexCount;
-    if (offset < 0) cout << offset << endl;
         errNum = clEnqueueReadBuffer(commandQueue, costArrayDevice, CL_FALSE, 0, sizeof(int) * graph->vertexCount,
                                      &outResultCosts[offset], 0, NULL, &readDone);
         checkError(errNum, CL_SUCCESS);
         clWaitForEvents(1, &readDone);
-        
-        //for (int j=0; j<graph->vertexCount; j++) {
-            //cout << j << ":" << outResultCosts[j] << endl;
-        //}
     }
 
     free (maskArrayHost);
@@ -720,7 +715,7 @@ void runDijkstraMultiGPUandCPU( const char* dir, cl_context gpuContext, cl_conte
                                 int *outResultCosts, int numResults )
 {
     strcpy(cl_dir, dir);
-    float ratioCPUtoGPU = 0.5; // CPU seems to run it at 2.26X on GT120 GPU
+    float ratioCPUtoGPU = 0.3; // CPU seems to run it at 2.26X on GT120 GPU
 
     // Find out how many GPU's to compute on all available GPUs
     cl_int errNum;
@@ -847,14 +842,14 @@ void runDijkstraRef( GraphData* graph, int *sourceVertices,
             if (v == sourceVertices[i])
             {
                 maskArray[v] = 1;
-                costArray[v] = 0.0;
-                updatingCostArray[v] = 0.0;
+                costArray[v] = 0;
+                updatingCostArray[v] = 0;
             }
             else
             {
                 maskArray[v] = 0;
-                costArray[v] = (int)FLT_MAX;
-                updatingCostArray[v] = (int)FLT_MAX;
+                costArray[v] = INT_MAX;
+                updatingCostArray[v] = INT_MAX;
             }
         }
 
