@@ -45,6 +45,10 @@ namespace OSMTools {
 
         wxString GetExeDir();
 
+        bool SaveQueryResults(const char* file_path,
+                              size_t num_nodes, int* results,
+            const std::vector<std::pair<int, int> >& query_to_node);
+    
     protected:
         GraphData graph;
         ANNkd_tree* kd_tree;
@@ -53,7 +57,7 @@ namespace OSMTools {
         int  num_edges;
         int* vertex_array;
         int* edge_array;
-        float* weight_array;
+        int* weight_array;
         double** query_xy;
 
         std::vector<OGRFeature*> roads;
@@ -87,9 +91,8 @@ namespace OSMTools {
         // anchor points in roads
         boost::unordered_map<int, bool> anchor_points;
 
-        // anchor point idx : <query point idx, distance>
-        boost::unordered_map<int,
-            std::vector<std::pair<int, double> > > source_dict;
+        // anchor point idx : idx-in-query_nodes
+        boost::unordered_map<int, int> source_dict;
 
         // final query nodes for dijkstra
         std::vector<int> query_nodes;

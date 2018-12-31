@@ -19,8 +19,8 @@
 ///
 /// This is part 1 of the Kernel from Algorithm 4 in the paper
 ///
-__kernel  void OCL_SSSP_KERNEL1(__global int *vertexArray, __global int *edgeArray, __global float*weightArray,
-                               __global int *maskArray, __global float*costArray, __global float*updatingCostArray,
+__kernel  void OCL_SSSP_KERNEL1(__global int *vertexArray, __global int *edgeArray, __global int*weightArray,
+                               __global int *maskArray, __global int*costArray, __global int*updatingCostArray,
                                int vertexCount, int edgeCount )
 {
     // access thread id
@@ -60,8 +60,8 @@ __kernel  void OCL_SSSP_KERNEL1(__global int *vertexArray, __global int *edgeArr
 ///
 /// This is part 2 of the Kernel from Algorithm 5 in the paper.  
 ///
-__kernel  void OCL_SSSP_KERNEL2(__global int *vertexArray, __global int *edgeArray, __global float *weightArray,
-                                __global int *maskArray, __global float *costArray, __global float *updatingCostArray,
+__kernel  void OCL_SSSP_KERNEL2(__global int *vertexArray, __global int *edgeArray, __global int *weightArray,
+                                __global int *maskArray, __global int *costArray, __global int *updatingCostArray,
                                 int vertexCount)
 {
     // access thread id
@@ -81,7 +81,7 @@ __kernel  void OCL_SSSP_KERNEL2(__global int *vertexArray, __global int *edgeArr
 ///
 /// Kernel to initialize buffers
 ///
-__kernel void initializeBuffers( __global int *maskArray, __global float *costArray, __global float *updatingCostArray,
+__kernel void initializeBuffers( __global int *maskArray, __global int *costArray, __global int *updatingCostArray,
                                  int sourceVertex, int vertexCount )
 {
     // access thread id
@@ -97,8 +97,8 @@ __kernel void initializeBuffers( __global int *maskArray, __global float *costAr
     else
     {
         maskArray[tid] = 0;
-        costArray[tid] = FLT_MAX;
-        updatingCostArray[tid] = FLT_MAX;
+        costArray[tid] = INT_MAX;
+        updatingCostArray[tid] = INT_MAX;
     }
 
 }

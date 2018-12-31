@@ -1,6 +1,7 @@
 //
 // Created by Xun Li on 12/22/18.
 //
+#include<stdio.h>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <wx/stdpaths.h>
 #include <wx/filename.h>
@@ -146,11 +147,13 @@ void TravelTool::PreprocessRoads()
     }
     kd_tree = new ANNkd_tree(xy, node_count, 2);
 
+    
     // using query points to find anchor points from roads
     double eps = 0.00000001; // error bound
     ANN_DIST_TYPE = 2;
 
     int anchor_cnt = 0, query_size = query_points.size();
+    std::vector<std::pair<int, int> > query_to_node(query_size);
     for (i=0; i<query_size; ++i) {
         feature = query_points[i];
         geom = feature->GetGeometryRef();
@@ -158,17 +161,22 @@ void TravelTool::PreprocessRoads()
         double* q_pt = new double[2];
         q_pt[0] = m_pt->getX();
         q_pt[1] = m_pt->getY();
+        
         ANNidxArray nnIdx = new ANNidx[2];
         ANNdistArray dists = new ANNdist[2];
         kd_tree->annkSearch(q_pt, 2, nnIdx, dists, eps);
+        
         int q_id = nnIdx[0];
         anchor_points[q_id] = true;
         if (source_dict.find(q_id) == source_dict.end()) {
             query_nodes.push_back(q_id);
+            source_dict[q_id] = anchor_cnt;
             anchor_cnt++;
         }
-        source_dict[q_id].push_back(
-                std::make_pair(i, dists[0]/20.0) );
+        double c = ComputeArcDist(*m_pt, nodes[q_id]) / 20.0;
+        //c = c * 60; // to minute
+        query_to_node[i] = std::make_pair(q_id, (int)c);
+        
         delete[] q_pt;
         delete[] nnIdx;
         delete[] dists;
@@ -202,8 +210,8 @@ void TravelTool::PreprocessRoads()
             }
         } else {
             std::string sp_str = maxspeed.substr(0,2);
-            speed_limit = atoi(sp_str.c_str()); // mile
-            speed_limit *= 1.6; // km
+            int val = atoi(sp_str.c_str()); // km
+            if (val > 0 && val < 100) speed_limit = val;
         }
         oneway_dict[i] = std::strcmp(oneway.c_str(),"yes") == 0 ? true : false;
 
@@ -313,8 +321,8 @@ void TravelTool::PreprocessRoads()
 
     // re-index nodes and edges
     int valid_index = 0;
-    boost::unordered_map<int, int> index_map;
-    boost::unordered_map<int, int> rev_index_map;
+    boost::unordered_map<int, int> index_map; // new idx : original idx
+    boost::unordered_map<int, int> rev_index_map; // orig idx : new idx
     for (i=0; i<node_count; ++i) {
         if (nodes_flag[i] == true) {
             index_map[valid_index] = i;
@@ -322,7 +330,20 @@ void TravelTool::PreprocessRoads()
             valid_index ++;
         }
     }
-
+    boost::unordered_map<int, int> new_source_dict;
+    for (i=0; i<query_nodes.size(); ++i) {
+        int new_idx = rev_index_map[ query_nodes[i] ];
+        query_nodes[i] = new_idx;
+        new_source_dict[new_idx] = source_dict[ query_nodes[i] ];
+    }
+    source_dict.clear();
+    source_dict = new_source_dict;
+    for (i=0; i<query_to_node.size(); ++i) {
+        query_to_node[i].first = rev_index_map[ query_to_node[i].first ];
+    }
+    
+    
+    // compute distance
     num_nodes = valid_index;
     num_edges = 0;
     boost::unordered_map<int, std::vector<std::pair<int, double> > >::iterator it;
@@ -332,7 +353,7 @@ void TravelTool::PreprocessRoads()
 
     vertex_array = (int*) malloc(num_nodes * sizeof(int));
     edge_array = (int*)malloc(num_edges * sizeof(int));
-    weight_array = (float*)malloc(num_edges * sizeof(float));
+    weight_array = (int*)malloc(num_edges * sizeof(int));
 
     graph.vertexCount = num_nodes;
     graph.vertexArray = vertex_array;
@@ -359,7 +380,7 @@ void TravelTool::PreprocessRoads()
 
     query_size = query_nodes.size();
     size_t results_mem = sizeof(int) * (size_t)query_size * (size_t)graph.vertexCount;
-    float *results = (float*) malloc(results_mem);
+    int *results = (int*) malloc(results_mem);
     int *sourceVertArray = (int*) malloc(sizeof(int) * query_size);
     for (size_t i=0; i<query_size; i++) sourceVertArray[i] = query_nodes[i];
 
@@ -399,14 +420,68 @@ void TravelTool::PreprocessRoads()
 
     runDijkstraMultiGPUandCPU(cl_dir, gpuContext, cpuContext, &graph, sourceVertArray, results, query_size);
     //runDijkstraMT(&graph, sourceVertArray, results, query_size);
+    //runDijkstraRef(&graph, sourceVertArray, results, 0, query_size-1);
+    
     pt::time_duration timeGPUCPU = pt::microsec_clock::local_time() - startTimeGPUCPU;
     printf("\nrunDijkstra - Multi GPU and CPU Time: %f s\n", (float)timeGPUCPU.total_milliseconds() / 1000.0f);
-
+    
+    pt::ptime saveTime = pt::microsec_clock::local_time();
+    
+    SaveQueryResults("/Users/xunli/Desktop/out.bin", num_nodes, results,
+                     query_to_node);
+    
+    pt::time_duration timeSave = pt::microsec_clock::local_time() - saveTime;
+    printf("\nrunDijkstra - Save Time: %f s\n", (float)timeSave.total_milliseconds() / 1000.0f);
+    
     clReleaseContext(gpuContext);
     clReleaseContext(cpuContext);
 
+    
     free(sourceVertArray);
     free(results);
+}
+
+bool TravelTool::SaveQueryResults(const char* file_path,
+                                  size_t num_nodes,
+                                  int* results,
+                    const std::vector<std::pair<int, int> >& query_to_node)
+{
+    if (file_path == 0) return false;
+    
+    FILE * fp;
+    fp = fopen(file_path, "wb");
+    if (fp == 0) return false;
+    
+    size_t n_query_pts = query_to_node.size();
+    
+    fwrite(&n_query_pts,sizeof(size_t), 1, fp);
+    
+    size_t node_i, node_j;
+    int c1, c2, c;
+    
+    int* row = (int*)malloc(sizeof(int)*n_query_pts);
+    for (size_t i=0; i<n_query_pts; ++i) {
+        for (size_t j=0; j<n_query_pts; ++j) {
+            // cost between i <--> j
+            if (i == j) {
+                // print 0
+                row[j] = 0;
+            } else {
+                node_i = source_dict[ query_to_node[i].first ];
+                c1 = query_to_node[i].second;
+                node_j = source_dict[ query_to_node[j].first ];
+                c2 = query_to_node[j].second;
+                c = results[node_i * num_nodes + node_j];
+                c = c1 + c + c2;
+                row[j] = c;
+            }
+        }
+        fwrite(row, sizeof(int), n_query_pts, fp);
+    }
+    free(row);
+    
+    fclose(fp);
+    return true;
 }
 
 void TravelTool::AddEdge(int way_idx, OGRPoint& from, OGRPoint& to, double cost)
