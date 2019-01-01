@@ -232,4 +232,10 @@ void runDijkstraMT ( GraphData* graph, int *sourceVertices,
 void runDijkstraRef( GraphData* graph, int *sourceVertices,
                      int *outResultCosts, int start, int end);
 
+void runSSSPGPU(const char* cl_dir, cl_context gpuContext, cl_context cpuContext, GraphData* graph,
+                int *sourceVertices, int *outResultCosts, int numResults );
+
+void runSSSP( const char* dir, cl_context context, cl_device_id deviceId, GraphData* graph,
+             int *sourceVertices, int *outResultCosts, int numResults);
+
 #endif // DIJKSTRA_KERNEL_H

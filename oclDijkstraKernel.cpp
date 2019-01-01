@@ -27,6 +27,7 @@
 #include <float.h>
 #include <iostream>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 //#include <pthread.h>
 #include <boost/thread.hpp>
@@ -34,6 +35,8 @@
 #include <iostream>
 #include <fstream>
 #include "oclDijkstraKernel.h"
+
+#define MAX_SOURCE_SIZE (0x100000)
 
 ///
 //  Macros
@@ -570,15 +573,10 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
 
         // Copy the result back
         size_t offset = i * (size_t)graph->vertexCount;
-    if (offset < 0) cout << offset << endl;
         errNum = clEnqueueReadBuffer(commandQueue, costArrayDevice, CL_FALSE, 0, sizeof(int) * graph->vertexCount,
                                      &outResultCosts[offset], 0, NULL, &readDone);
         checkError(errNum, CL_SUCCESS);
         clWaitForEvents(1, &readDone);
-        
-        //for (int j=0; j<graph->vertexCount; j++) {
-            //cout << j << ":" << outResultCosts[j] << endl;
-        //}
     }
 
     free (maskArrayHost);
@@ -720,7 +718,7 @@ void runDijkstraMultiGPUandCPU( const char* dir, cl_context gpuContext, cl_conte
                                 int *outResultCosts, int numResults )
 {
     strcpy(cl_dir, dir);
-    float ratioCPUtoGPU = 0.5; // CPU seems to run it at 2.26X on GT120 GPU
+    float ratioCPUtoGPU = 0.45; // CPU seems to run it at 2.26X on GT120 GPU
 
     // Find out how many GPU's to compute on all available GPUs
     cl_int errNum;
@@ -847,14 +845,14 @@ void runDijkstraRef( GraphData* graph, int *sourceVertices,
             if (v == sourceVertices[i])
             {
                 maskArray[v] = 1;
-                costArray[v] = 0.0;
-                updatingCostArray[v] = 0.0;
+                costArray[v] = 0;
+                updatingCostArray[v] = 0;
             }
             else
             {
                 maskArray[v] = 0;
-                costArray[v] = (int)FLT_MAX;
-                updatingCostArray[v] = (int)FLT_MAX;
+                costArray[v] = INT_MAX;
+                updatingCostArray[v] = INT_MAX;
             }
         }
 
@@ -956,4 +954,268 @@ void runDijkstraMT(GraphData* graph, int *sourceVertices,
         delete bthread[i];
     }
     cout << "CPU: Computed '" << numResults << "' results." << endl;
+}
+
+
+void ssspThread(DevicePlan *plan)
+{
+    //runSSSP( plan->context, plan->deviceId, plan->graph, plan->sourceVertices,
+    //            plan->outResultCosts, plan->numResults );
+}
+
+void runSSSPGPU(const char* dir, cl_context gpuContext, cl_context cpuContext, GraphData* graph,
+                int *sourceVertices, int *outResultCosts, int numResults )
+{
+    strcpy(cl_dir, dir);
+    float ratioCPUtoGPU = 0.45; // CPU seems to run it at 2.26X on GT120 GPU
+
+    // Find out how many GPU's to compute on all available GPUs
+    cl_int errNum;
+    size_t deviceBytes;
+    cl_uint gpuDeviceCount;
+    cl_uint cpuDeviceCount;
+
+    errNum = clGetContextInfo(gpuContext, CL_CONTEXT_DEVICES, 0, NULL, &deviceBytes);
+    checkError(errNum, CL_SUCCESS);
+    gpuDeviceCount = (cl_uint)deviceBytes/sizeof(cl_device_id);
+
+    if (gpuDeviceCount == 0) {
+        cerr << "ERROR: no GPUs present!" << endl;
+        return;
+    }
+
+    cl_uint totalDeviceCount = gpuDeviceCount + 1;
+
+    DevicePlan *devicePlans = (DevicePlan*) malloc(sizeof(DevicePlan) * totalDeviceCount);
+    boost::thread* bthread[totalDeviceCount];
+
+    int cpuResults = numResults * (ratioCPUtoGPU);
+    cout << "cpuResults: " << cpuResults << endl;
+
+    int gpuResults = numResults - cpuResults;
+    cout << "gpuResults: " << gpuResults << endl;
+
+    // run on GPUs:
+    // Divide the workload out per device
+    int resultsPerGPU = gpuResults / gpuDeviceCount;
+    int curDevice = 0;
+    int offset = cpuResults;
+    for (unsigned int i = 0; i < gpuDeviceCount; i++) {
+        devicePlans[curDevice].context = gpuContext;
+        devicePlans[curDevice].deviceId = getDev(gpuContext, i);;
+        devicePlans[curDevice].graph = graph;
+        devicePlans[curDevice].sourceVertices = &sourceVertices[offset];
+        devicePlans[curDevice].outResultCosts = &outResultCosts[(size_t)offset * (size_t)graph->vertexCount];
+        devicePlans[curDevice].numResults = resultsPerGPU;
+
+        offset += resultsPerGPU;
+        curDevice++;
+    }
+
+    // Add any remaining work to the last GPU
+    if (offset < numResults) {
+        devicePlans[gpuDeviceCount - 1].numResults += (numResults - offset);
+    }
+
+    // Launch all the threads
+    for (unsigned int i = 0; i < gpuDeviceCount; i++) {
+        bthread[i] = new boost::thread(&ssspThread, (DevicePlan*)(devicePlans + i));
+    }
+    // run on CPU
+    bthread[totalDeviceCount-1] = new boost::thread(
+                                                    boost::bind(&runDijkstraMT, graph, sourceVertices, outResultCosts, cpuResults));
+
+    // Wait for the results from all threads
+    for (unsigned int i = 0; i < totalDeviceCount; i++) {
+        bthread[i]->join();
+    }
+
+    for (unsigned int i = 0; i < totalDeviceCount; i++) {
+        delete bthread[i];
+    }
+    free (devicePlans);
+}
+
+char *replace_str1(char *str, char *orig, char *rep, int start)
+{
+    static char temp[4096];
+    static char buffer[4096];
+    char *p;
+
+    strcpy(temp, str + start);
+
+    if(!(p = strstr(temp, orig)))  // Is 'orig' even in 'temp'?
+        return temp;
+
+    strncpy(buffer, temp, p-temp); // Copy characters from 'temp' start to 'orig' str
+    buffer[p-temp] = '\0';
+
+    sprintf(buffer + (p - temp), "%s%s", rep, p + strlen(orig));
+    sprintf(str + start, "%s", buffer);
+
+    return str;
+}
+
+void runSSSP( const char* dir, cl_context context, cl_device_id deviceId, GraphData* graph,
+                 int *sourceVertices, int *outResultCosts, int numResults)
+{
+    strcpy(cl_dir, dir);
+
+    size_t results_size = (size_t)graph->vertexCount * (size_t)numResults;
+    // Create command queue
+    cl_int errNum;
+    cl_command_queue commandQueue;
+    commandQueue = clCreateCommandQueue( context, deviceId, 0, &errNum );
+    checkError(errNum, CL_SUCCESS);
+
+    // Program handle
+    cl_program program = loadAndBuildProgram( context, "sssp.cl" );
+/*
+    char *source_str;
+    size_t source_size;
+
+    char file_path[1024];
+    strncpy(file_path, cl_dir, 1024);
+    strcat(file_path, "sssp.cl");
+    FILE *fp = fopen(file_path, "r");
+    source_str = (char*)malloc(MAX_SOURCE_SIZE);
+    source_size = fread( source_str, 1, MAX_SOURCE_SIZE, fp);
+    fclose(fp);
+
+    char msg[25];
+#ifdef __WIN32__
+    _snprintf(msg, sizeof(msg), "%d", graph->vertexCount);
+#else
+    snprintf(msg, sizeof(msg), "%d", graph->vertexCount);
+#endif
+    replace_str1(source_str, "7777", msg, 0);
+    replace_str1(source_str, "8888", msg, 0);
+    replace_str1(source_str, "9999", msg, 0);
+    source_size = strlen(source_str);
+    cl_program program = clCreateProgramWithSource(context, 1, (const char **)&source_str, (const size_t *)&source_size, &errNum);
+*/
+    // Get the max workgroup size
+    size_t maxWorkGroupSize;
+    clGetDeviceInfo(deviceId, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t), &maxWorkGroupSize, NULL);
+
+    cl_device_type dev_type;
+    clGetDeviceInfo(deviceId, CL_DEVICE_TYPE, sizeof(dev_type), &dev_type, NULL);
+    if (dev_type == CL_DEVICE_TYPE_CPU) {
+        maxWorkGroupSize = 128;
+    }
+    checkError(errNum, CL_SUCCESS);
+    cout << "MAX_WORKGROUP_SIZE: " << maxWorkGroupSize << endl;
+    cout << "Computing '" << numResults << "' results." << endl;
+    // Set # of work items in work group and total in 1 dimensional range
+    size_t localWorkSize = maxWorkGroupSize;
+    size_t globalWorkSize = roundWorkSizeUp(localWorkSize, graph->vertexCount);
+
+    cl_mem vertexArrayDevice;
+    cl_mem edgeArrayDevice;
+    cl_mem weightArrayDevice;
+    cl_mem sourceArrayDevice;
+    cl_mem maskArrayDevice;
+    cl_mem costArrayDevice;
+    cl_mem updatingCostArrayDevice;
+    cl_mem resultArrayDevice;
+
+    // Allocate buffers in Device memory
+    cl_mem hostVertexArrayBuffer;
+    cl_mem hostEdgeArrayBuffer;
+    cl_mem hostWeightArrayBuffer;
+    cl_mem hostSourceArrayBuffer;
+
+    // First, need to create OpenCL Host buffers that can be copied to device buffers
+    hostVertexArrayBuffer = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR | CL_MEM_ALLOC_HOST_PTR,
+                                           sizeof(int) * graph->vertexCount, graph->vertexArray, &errNum);
+    checkError(errNum, CL_SUCCESS);
+    hostEdgeArrayBuffer = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR | CL_MEM_ALLOC_HOST_PTR,
+                                         sizeof(int) * graph->edgeCount, graph->edgeArray, &errNum);
+    checkError(errNum, CL_SUCCESS);
+    hostWeightArrayBuffer = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR | CL_MEM_ALLOC_HOST_PTR,
+                                           sizeof(int) * graph->edgeCount, graph->weightArray, &errNum);
+    checkError(errNum, CL_SUCCESS);
+    hostSourceArrayBuffer = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR | CL_MEM_ALLOC_HOST_PTR,
+                                           sizeof(int) * numResults, sourceVertices, &errNum);
+    checkError(errNum, CL_SUCCESS);
+    // Now create all of the GPU buffers
+    vertexArrayDevice = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(int) * globalWorkSize, NULL, &errNum);
+    checkError(errNum, CL_SUCCESS);
+    edgeArrayDevice = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(int) * graph->edgeCount, NULL, &errNum);
+    checkError(errNum, CL_SUCCESS);
+    weightArrayDevice = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(int) * graph->edgeCount, NULL, &errNum);
+    checkError(errNum, CL_SUCCESS);
+    sourceArrayDevice = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(int) * numResults, NULL, &errNum);
+    checkError(errNum, CL_SUCCESS);
+    maskArrayDevice = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(int) * globalWorkSize, NULL, &errNum);
+    checkError(errNum, CL_SUCCESS);
+    costArrayDevice = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(int) * globalWorkSize, NULL, &errNum);
+    checkError(errNum, CL_SUCCESS);
+    updatingCostArrayDevice = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(int) * globalWorkSize, NULL, &errNum);
+    checkError(errNum, CL_SUCCESS);
+    resultArrayDevice = clCreateBuffer(context, CL_MEM_READ_WRITE,
+                                       sizeof(int) * results_size, NULL, &errNum);
+    checkError(errNum, CL_SUCCESS);
+
+    // Now queue up the data to be copied to the device
+    errNum = clEnqueueCopyBuffer(commandQueue, hostVertexArrayBuffer, vertexArrayDevice, 0, 0,
+                                 sizeof(int) * graph->vertexCount, 0, NULL, NULL);
+    checkError(errNum, CL_SUCCESS);
+    errNum = clEnqueueCopyBuffer(commandQueue, hostEdgeArrayBuffer, edgeArrayDevice, 0, 0,
+                                 sizeof(int) * graph->edgeCount, 0, NULL, NULL);
+    checkError(errNum, CL_SUCCESS);
+    errNum = clEnqueueCopyBuffer(commandQueue, hostWeightArrayBuffer, weightArrayDevice, 0, 0,
+                                 sizeof(int) * graph->edgeCount, 0, NULL, NULL);
+    checkError(errNum, CL_SUCCESS);
+    errNum = clEnqueueCopyBuffer(commandQueue, hostSourceArrayBuffer, sourceArrayDevice, 0, 0,
+                                 sizeof(int) * numResults, 0, NULL, NULL);
+    checkError(errNum, CL_SUCCESS);
+
+    clReleaseMemObject(hostVertexArrayBuffer);
+    clReleaseMemObject(hostEdgeArrayBuffer);
+    clReleaseMemObject(hostWeightArrayBuffer);
+    clReleaseMemObject(hostSourceArrayBuffer);
+
+    // Create the Kernels
+    cl_kernel ssspKernel1;
+    ssspKernel1 = clCreateKernel(program, "SSSP_KERNEL", &errNum);
+    checkError(errNum, CL_SUCCESS);
+    errNum |= clSetKernelArg(ssspKernel1, 0, sizeof(cl_int), &graph->vertexCount);
+    errNum |= clSetKernelArg(ssspKernel1, 1, sizeof(cl_int), &graph->edgeCount);
+    errNum |= clSetKernelArg(ssspKernel1, 2, sizeof(cl_mem), &vertexArrayDevice);
+    errNum |= clSetKernelArg(ssspKernel1, 3, sizeof(cl_mem), &edgeArrayDevice);
+    errNum |= clSetKernelArg(ssspKernel1, 4, sizeof(cl_mem), &weightArrayDevice);
+    errNum |= clSetKernelArg(ssspKernel1, 5, sizeof(cl_mem), &maskArrayDevice);
+    errNum |= clSetKernelArg(ssspKernel1, 6, sizeof(cl_mem), &costArrayDevice);
+    errNum |= clSetKernelArg(ssspKernel1, 7, sizeof(cl_mem), &updatingCostArrayDevice);
+    errNum |= clSetKernelArg(ssspKernel1, 8, sizeof(cl_mem), &sourceArrayDevice);
+    errNum |= clSetKernelArg(ssspKernel1, 9, sizeof(cl_mem), &resultArrayDevice);
+
+    checkError(errNum, CL_SUCCESS);
+
+    errNum = clEnqueueNDRangeKernel(commandQueue, ssspKernel1, 1, 0,
+                                    &globalWorkSize, &localWorkSize,
+                                    0, NULL, NULL);
+    checkError(errNum, CL_SUCCESS);
+
+    // Copy the result back
+    cl_event readDone;
+    size_t offset = 0;
+    errNum = clEnqueueReadBuffer(commandQueue, resultArrayDevice, CL_FALSE, 0,
+                                 sizeof(int) * graph->vertexCount,
+                                 &outResultCosts[offset], 0, NULL, &readDone);
+    checkError(errNum, CL_SUCCESS);
+    clWaitForEvents(1, &readDone);
+
+    clReleaseMemObject(vertexArrayDevice);
+    clReleaseMemObject(edgeArrayDevice);
+    clReleaseMemObject(weightArrayDevice);
+    clReleaseMemObject(resultArrayDevice);
+
+    clReleaseKernel(ssspKernel1);
+
+    clReleaseCommandQueue(commandQueue);
+    clReleaseProgram(program);
+    cout << "Computed '" << numResults << "' results" << endl;
+
 }
