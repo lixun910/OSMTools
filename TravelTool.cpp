@@ -470,10 +470,6 @@ void TravelTool::PreprocessRoads()
     
     //SaveQueryResults("/Users/xunli/Desktop/out.bin", num_nodes, results,
     //                 query_to_node);
-    FILE * fp;
-    fp = fopen("/Users/xun/Desktop/out.bin", "wb");
-    fwrite(results,sizeof(int), (size_t)query_size * (size_t)graph.vertexCount, fp);
-    fclose(fp);
     
     pt::time_duration timeSave = pt::microsec_clock::local_time() - saveTime;
     printf("\nrunDijkstra - Save Time: %f s\n", (float)timeSave.total_milliseconds() / 1000.0f);

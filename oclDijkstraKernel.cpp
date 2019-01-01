@@ -718,7 +718,9 @@ void runDijkstraMultiGPUandCPU( const char* dir, cl_context gpuContext, cl_conte
                                 int *outResultCosts, int numResults )
 {
     strcpy(cl_dir, dir);
-    float ratioCPUtoGPU = 0.45; // CPU seems to run it at 2.26X on GT120 GPU
+
+    float ratioCPUtoGPU = 0.3; // CPU seems to run it at 2.26X on GT120 GPU
+
 
     // Find out how many GPU's to compute on all available GPUs
     cl_int errNum;
