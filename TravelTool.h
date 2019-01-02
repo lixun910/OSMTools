@@ -106,8 +106,8 @@ namespace OSMTools {
         // anchor points in roads
         boost::unordered_map<int, bool> anchor_points;
 
-        // anchor point idx : idx-in-query_nodes
-        boost::unordered_map<int, int> source_dict;
+        // anchor point idx : [idx-in-query_nodes]
+        boost::unordered_map<int, std::vector<int> > source_dict;
 
         // final query nodes for dijkstra
         std::vector<int> query_nodes;

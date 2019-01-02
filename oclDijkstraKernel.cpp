@@ -1481,8 +1481,8 @@ void dijkstra(struct Graph* graph, int src, int i_result, int* results)
 
     // print the calculated shortest distances
     //printArr(dist, V);
-    size_t offset = size_t(i_result) * graph->V;
-    memcpy(&results[offset], &dist, sizeof(int) * graph->V);
+    
+    //memcpy(&results[offset], &dist, sizeof(int) * graph->V);
 
     //for (int i = 0; i < V; ++i) {
         //printf("%d \t\t %d\n", i, dist[i]);

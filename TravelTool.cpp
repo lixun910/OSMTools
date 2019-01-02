@@ -169,9 +169,9 @@ void TravelTool::PreprocessRoads()
         anchor_points[q_id] = true;
         if (source_dict.find(q_id) == source_dict.end()) {
             query_nodes.push_back(q_id);
-            source_dict[q_id] = anchor_cnt;
             anchor_cnt++;
         }
+        source_dict[q_id].push_back(i);
         double c = ComputeArcDist(*m_pt, nodes[q_id]) / (20.0 * 1000);
         c = c * 60 * 60; // to minute
         query_to_node[i] = std::make_pair(q_id, (int)c);
@@ -369,7 +369,7 @@ void TravelTool::PreprocessRoads()
             valid_index ++;
         }
     }
-    boost::unordered_map<int, int> new_source_dict;
+    boost::unordered_map<int, std::vector<int> > new_source_dict;
     for (i=0; i<query_nodes.size(); ++i) {
         int new_idx = rev_index_map[ query_nodes[i] ];
         query_nodes[i] = new_idx;
@@ -438,7 +438,10 @@ void TravelTool::PreprocessRoads()
                                                    this,
                                                    (Graph*) cpu_graph,
                                                    (int*)sourceVertArray,
-                                                   (int*)results, a, b));
+                                                   (int*)results,
+                                                   //query_to_node,
+                                                   //source_dict,
+                                                   a, b));
     }
     for (unsigned int i = 0; i < tot_threads; i++) {
         bthread[i]->join();
@@ -461,7 +464,7 @@ void TravelTool::dijkstra_thread(Graph* graph, int* query_indexes,
                                  int* results, int a, int b)
 {
     for (size_t i=a; i<=b; ++i) {
-        dijkstra(graph, query_indexes[i], i, results);
+        dijkstra(graph, query_indexes[i], i, results); // std::vector<int>,
     }
 }
 
@@ -481,6 +484,7 @@ bool TravelTool::SaveQueryResults(const char* file_path,
                                   int* results,
                     const std::vector<std::pair<int, int> >& query_to_node)
 {
+    /*
     if (file_path == 0) return false;
     
     FILE * fp;
@@ -516,6 +520,7 @@ bool TravelTool::SaveQueryResults(const char* file_path,
     free(row);
     
     fclose(fp);
+     */
     return true;
 }
 
