@@ -32,6 +32,11 @@ namespace OSMTools {
 
         void PreprocessRoads();
 
+        void ComputeDistMatrixGPU();
+
+        void dijkstra_thread(Graph* graph, int* query_indexes,
+                             int* results, int a, int b);
+        
         bool MergeTwoWaysByStart(int w1, int w2);
 
         bool MergeTwoWaysByEnd(int w1, int w2);
@@ -39,7 +44,7 @@ namespace OSMTools {
         double ComputeArcDist(OGRPoint& from, OGRPoint& to);
 
         void AddEdge(int way_idx, OGRPoint& from,
-                OGRPoint& to, double cost);
+                OGRPoint& to, int cost);
 
         void SaveMergedRoads(const char* shp_file_name);
 
@@ -61,6 +66,9 @@ namespace OSMTools {
 
         int  num_nodes;
         int  num_edges;
+
+        //int *results;
+
         int* vertex_array;
         int* edge_array;
         int* weight_array;
@@ -87,7 +95,7 @@ namespace OSMTools {
 
         boost::unordered_map<RD_POINT, int> nodes_dict;
 
-        boost::unordered_map<std::pair<int, int>, double> pair_cost;
+        boost::unordered_map<std::pair<int, int>, int> pair_cost;
 
         // node: count of edge appearance
         boost::unordered_map<int, int> node_appearance;
