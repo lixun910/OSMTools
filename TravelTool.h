@@ -10,7 +10,11 @@
 #include <boost/unordered_map.hpp>
 #include <wx/wx.h>
 
+#ifdef __GEODA__
 #include "../kNN/ANN/ANN.h"
+#else
+#include <ANN/ANN.h>
+#endif
 #include <ogrsf_frmts.h>
 
 #include "oclDijkstraKernel.h"
@@ -23,11 +27,16 @@ namespace OSMTools {
     public:
         TravelTool();
 
-        TravelTool(std::vector<OGRFeature*> roads,
-                std::vector<OGRFeature*> query_points);
+        TravelTool(std::vector<OGRFeature*> roads);
 
         ~TravelTool();
 
+        void GetDistanceMatrix(std::vector<OGRFeature*> query_points);
+
+        void BuildCPUGraph();
+
+        void Query(OGRPoint& from_pt, OGRPoint& to_pt);
+        
     protected:
 
         void PreprocessRoads();
@@ -38,7 +47,7 @@ namespace OSMTools {
 
         void ComputeDistMatrixGPU(int* results, int query_size, int offset);
 
-        void dijkstra_thread(Graph* graph,
+        void dijkstra_thread(CPUGraph* graph,
                              const std::vector<int>& query_indexes,
                              int* results,
                              const std::vector<std::pair<int, int> >& query_to_node,
@@ -71,8 +80,10 @@ namespace OSMTools {
         int DetectGPU();
         
     protected:
-        
+        double** xy;
         ANNkd_tree* kd_tree;
+
+        CPUGraph* cpu_graph;
 
         float ratio_cpu_to_gpu;
         int  num_gpus;

@@ -723,9 +723,9 @@ struct AdjListNode* newAdjListNode(int dest, int weight)
 }
 
 // A utility function that creates a graph of V vertices
-struct Graph* createGraph(int V)
+struct CPUGraph* createGraph(int V)
 {
-    struct Graph* graph = (struct Graph*) malloc(sizeof(struct Graph));
+    struct CPUGraph* graph = (struct CPUGraph*) malloc(sizeof(struct CPUGraph));
     graph->V = V;
 
     // Create an array of adjacency lists.  Size of array will be V
@@ -739,7 +739,7 @@ struct Graph* createGraph(int V)
 }
 
 // Adds an edge to an undirected graph
-void addEdgeToGraph(struct Graph* graph, int src, int dest, int weight)
+void addEdgeToGraph(struct CPUGraph* graph, int src, int dest, int weight)
 {
     // Add an edge from src to dest.  A new node is added to the adjacency
     // list of src.  The node is added at the begining
@@ -903,9 +903,10 @@ void printArr(int dist[], int n)
 
 // The main function that calulates distances of shortest paths from src to all
 // vertices. It is a O(ELogV) function
-void dijkstra(struct Graph* graph, int src, int* results,
+void dijkstra(struct CPUGraph* graph, int src, int* results,
               const std::vector<std::pair<int, int> >& query_to_node,
-              boost::unordered_map<int, std::vector<int> >& node_to_query)
+              boost::unordered_map<int, std::vector<int> >& node_to_query,
+              int* path)
 {
     int V = graph->V;// Get the number of vertices in graph
     int dist[V];      // dist values used to pick minimum weight edge in cut
@@ -914,12 +915,12 @@ void dijkstra(struct Graph* graph, int src, int* results,
     struct MinHeap* minHeap = createMinHeap(V);
 
     // Initialize min heap with all vertices. dist value of all vertices
-    for (int v = 0; v < V; ++v)
-        {
+    for (int v = 0; v < V; ++v) {
+        if (path) path[v] = -1;
         dist[v] = INT_MAX;
         minHeap->array[v] = newMinHeapNode(v, dist[v]);
         minHeap->pos[v] = v;
-        }
+    }
 
     // Make dist value of src vertex as 0 so that it is extracted first
     minHeap->array[src] = newMinHeapNode(src, dist[src]);
@@ -932,8 +933,7 @@ void dijkstra(struct Graph* graph, int src, int* results,
 
     // In the followin loop, min heap contains all nodes
     // whose shortest distance is not yet finalized.
-    while (!isEmpty(minHeap))
-        {
+    while (!isEmpty(minHeap)) {
         // Extract the vertex with minimum distance value
         struct MinHeapNode* minHeapNode = extractMin(minHeap);
         int u = minHeapNode->v; // Store the extracted vertex number
@@ -941,23 +941,23 @@ void dijkstra(struct Graph* graph, int src, int* results,
         // Traverse through all adjacent vertices of u (the extracted
         // vertex) and update their distance values
         struct AdjListNode* pCrawl = graph->array[u].head;
-        while (pCrawl != NULL)
-            {
+        while (pCrawl != NULL) {
             int v = pCrawl->dest;
 
             // If shortest distance to v is not finalized yet, and distance to v
             // through u is less than its previously calculated distance
             if (isInMinHeap(minHeap, v) && dist[u] != INT_MAX &&
                 pCrawl->weight + dist[u] < dist[v])
-                {
+            {
+                if (path) path[v] = u;
                 dist[v] = dist[u] + pCrawl->weight;
 
                 // update distance value in min heap also
                 decreaseKey(minHeap, v, dist[v]);
-                }
-            pCrawl = pCrawl->next;
             }
+            pCrawl = pCrawl->next;
         }
+    }
 
     //free allocated memory
     delete[] minHeap->pos;
@@ -965,38 +965,34 @@ void dijkstra(struct Graph* graph, int src, int* results,
     delete[] minHeap->array;
     delete minHeap;
 
-    // print the calculated shortest distances
-    //printArr(dist, V);
-    
-    //memcpy(&results[offset], &dist, sizeof(int) * graph->V);
+    if (path) {
+        // return path
+        
+    } else {
+        size_t i, j, offset, n_query;
+        int node_idx, cost;
 
-    //for (int i = 0; i < V; ++i) {
-        //printf("%d \t\t %d\n", i, dist[i]);
-    //    results[offset+i] = dist[i];
-    //}
-    size_t i, j, offset, n_query;
-    int node_idx, cost;
-    
-    std::vector<int>& query_idx = node_to_query[src];
-    n_query = query_to_node.size();
-    
-    for (i=0; i<query_idx.size(); ++i) {
-        offset = (size_t)query_idx[i] * n_query;
-        for (j=0; j<n_query; ++j) {
-            if (query_idx[i] == j) {
-                results[offset+j] = 0;
-            } else {
-                node_idx = query_to_node[j].first;
-                cost = dist[node_idx];
-                cost += query_to_node[j].second;
-                cost += query_to_node[query_idx[i]].second;
-                results[offset+j] = cost;
+        std::vector<int>& query_idx = node_to_query[src];
+        n_query = query_to_node.size();
+
+        for (i=0; i<query_idx.size(); ++i) {
+            offset = (size_t)query_idx[i] * n_query;
+            for (j=0; j<n_query; ++j) {
+                if (query_idx[i] == j) {
+                    results[offset+j] = 0;
+                } else {
+                    node_idx = query_to_node[j].first;
+                    cost = dist[node_idx];
+                    cost += query_to_node[j].second;
+                    cost += query_to_node[query_idx[i]].second;
+                    results[offset+j] = cost;
+                }
             }
         }
     }
 }
 
-void freeGraph(Graph* graph)
+void freeGraph(CPUGraph* graph)
 {
     struct AdjListNode *AdjListNode;
     struct AdjListNode *temp;

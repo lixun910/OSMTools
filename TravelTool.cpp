@@ -29,8 +29,7 @@ TravelTool::TravelTool()
 
 }
 
-TravelTool::TravelTool(std::vector<OGRFeature*> in_roads,
-        std::vector<OGRFeature*> in_query_points)
+TravelTool::TravelTool(std::vector<OGRFeature*> in_roads)
 {
     speed_limit_dict["road"]=32;
     speed_limit_dict["motorway"] = 96;
@@ -69,8 +68,6 @@ TravelTool::TravelTool(std::vector<OGRFeature*> in_roads,
     speed_limit_dict["roundabout"] = 40;
 
     roads = in_roads;
-    query_points = in_query_points;
-
     num_gpus = DetectGPU();
     num_cores = boost::thread::hardware_concurrency();
     
@@ -79,7 +76,9 @@ TravelTool::TravelTool(std::vector<OGRFeature*> in_roads,
 
 TravelTool::~TravelTool()
 {
-
+    for (int i=0; i<kd_tree->nPoints(); ++i) delete[] xy[i];
+    delete[] xy;
+    delete kd_tree;
 }
 
 wxString TravelTool::GetExeDir()
@@ -92,8 +91,6 @@ wxString TravelTool::GetExeDir()
 }
 void TravelTool::PreprocessRoads()
 {
-    pt::ptime startTimeGPUCPU = pt::microsec_clock::local_time();
-    
     if (roads.empty() == true) return;
 
     size_t n_roads = roads.size();
@@ -140,7 +137,7 @@ void TravelTool::PreprocessRoads()
     nodes_flag.resize(node_count, false);
 
     // create a kdtree using nodes in ways
-    double** xy = new double*[node_count];
+    xy = new double*[node_count];
     for (i=0; i<node_count; ++i) {
         OGRPoint pt = nodes[i];
         xy[i] = new double[2];
@@ -148,11 +145,85 @@ void TravelTool::PreprocessRoads()
         xy[i][1] = pt.getY();
     }
     kd_tree = new ANNkd_tree(xy, node_count, 2);
+}
 
-    
+void TravelTool::BuildCPUGraph()
+{
+    // adjacent dijkstra on CPU
+    cpu_graph = createGraph(num_nodes);
+
+    OGRFeature* feature;
+    OGRGeometry* geom;
+    OGRLineString* line;
+
+    size_t i, j, cost, n_pts, node_idx, nbr_idx;
+    int from, to;
+    std::string highway, oneway, maxspeed;
+    double speed_limit = 20.0, length;
+
+    for (i=0; i<edges.size(); ++i) {
+        n_pts = edges[i].size();
+        OGRPoint start = edges[i][0];
+        OGRPoint end = edges[i][n_pts-1];
+        if (start.Equals(&end)) {
+            removed_edges[i] = -1; // means circle
+        }
+        // compute pair_cost
+        feature = roads[i];
+        highway = feature->GetFieldAsString("highway");
+        oneway = feature->GetFieldAsString("oneway");
+        maxspeed = feature->GetFieldAsString("maxspeed");
+        if (maxspeed.empty()) {
+            if (speed_limit_dict.find(highway) != speed_limit_dict.end()) {
+                speed_limit = speed_limit_dict[highway];
+            }
+        } else {
+            std::string sp_str = maxspeed.substr(0,2);
+            int val = atoi(sp_str.c_str()); // km
+            if (val > 0 && val < 100) speed_limit = val;
+        }
+        oneway_dict[i] = std::strcmp(oneway.c_str(),"yes") == 0 ? true : false;
+
+        for (j=0; j<n_pts-1; ++j) {
+            start = edges[i][j];
+            end = edges[i][j+1];
+            RD_POINT rd_from = std::make_pair(start.getX(), start.getY());
+            RD_POINT rd_to = std::make_pair(end.getX(), end.getY());
+            from = nodes_dict[rd_from];
+            to = nodes_dict[rd_to];
+            length = ComputeArcDist(start, end);
+            cost = (length / (speed_limit * 1000)) * 60 * 60;
+            if (cost <= 0) cost = 1; // make sure
+
+            addEdgeToGraph(cpu_graph, from, to, cost);
+            if (oneway_dict[i]==false) {
+                addEdgeToGraph(cpu_graph, to, from, cost);
+            }
+        }
+    }
+}
+
+void TravelTool::Query(OGRPoint& from_pt, OGRPoint& to_pt)
+{
+    int path[cpu_graph->V];
+    int query_node_index;
+
+    dijkstra(cpu_graph, query_node_index, 0/*results*/, query_to_node,
+             node_to_query, path);
+}
+
+void TravelTool::GetDistanceMatrix(std::vector<OGRFeature *> _query_points)
+{
+    query_points = _query_points;
+
     // using query points to find anchor points from roads
     double eps = 0.00000001; // error bound
+#ifdef __GEODA__
     ANN_DIST_TYPE = 2;
+#endif
+    int i, j, n_pts;
+    OGRFeature* feature;
+    OGRGeometry* geom;
 
     int anchor_cnt = 0, query_size = query_points.size();
     query_to_node.resize(query_size);
@@ -184,9 +255,6 @@ void TravelTool::PreprocessRoads()
         delete[] dists;
     }
 
-    delete kd_tree;
-    for (i=0; i<node_count; ++i) delete[] xy[i];
-    delete[] xy;
 
     // build graph
     // remove circle way
@@ -363,6 +431,7 @@ void TravelTool::PreprocessRoads()
     
     // re-index nodes and edges
     int valid_index = 0;
+    int node_count = kd_tree->nPoints();
     boost::unordered_map<int, int> index_map; // new idx : original idx
     boost::unordered_map<int, int> rev_index_map; // orig idx : new idx
     for (i=0; i<node_count; ++i) {
@@ -417,13 +486,10 @@ void TravelTool::PreprocessRoads()
     ComputeDistMatrix(results);
     
     std::vector<wxString> query_ids;
-    SaveQueryResults("/Users/xunli/Desktop/out.bin", query_size, results,
+    SaveQueryResults("/Users/xun/Desktop/out.bin", query_size, results,
                      query_ids);
     
     free(results);
-    pt::time_duration timeGPUCPU = pt::microsec_clock::local_time() - startTimeGPUCPU;
-    printf("\nrunDijkstra - All Time: %f s\n", (float)timeGPUCPU.total_milliseconds() / 1000.0f);
-
 }
 
 void TravelTool::ComputeDistMatrix(int* results)
@@ -435,7 +501,7 @@ void TravelTool::ComputeDistMatrix(int* results)
         ComputeDistMatrixCPU(results, query_size, num_cores);
         
     } else {
-        ratio_cpu_to_gpu = 0.55;
+        ratio_cpu_to_gpu = 0.8;
         int cpu_results = query_size * (ratio_cpu_to_gpu);
         int gpu_results = query_size - cpu_results;
         //int num_works = num_gpus + 1 /*cpu*/;
@@ -471,14 +537,14 @@ void TravelTool::ComputeDistMatrixCPU(int* results, int query_size, int nCPUs)
     size_t i, j, cost, node_idx, nbr_idx;
     
     // adjacent dijkstra on CPU
-    Graph* cpu_graph = createGraph(num_nodes);
+    CPUGraph* graph = createGraph(num_nodes);
     for(i = 0; i < num_nodes; i++) {
         // for each valid node
         std::vector<std::pair<int, double> >& nbrs = edges_dict[i];
         for (j=0; j<nbrs.size(); ++j) {
             nbr_idx = nbrs[j].first;
             cost = nbrs[j].second;
-            addEdgeToGraph(cpu_graph, i, nbr_idx, cost);
+            addEdgeToGraph(graph, i, nbr_idx, cost);
         }
     }
     
@@ -507,7 +573,7 @@ void TravelTool::ComputeDistMatrixCPU(int* results, int query_size, int nCPUs)
         
         bthread[i] = new boost::thread(boost::bind(&TravelTool::dijkstra_thread,
                                                    this,
-                                                   (Graph*) cpu_graph,
+                                                   (CPUGraph*) graph,
                                                    boost::ref(query_nodes),
                                                    (int*) results,
                                                    boost::ref(query_to_node),
@@ -522,13 +588,13 @@ void TravelTool::ComputeDistMatrixCPU(int* results, int query_size, int nCPUs)
         delete bthread[i];
     }
     
-    freeGraph(cpu_graph);
+    freeGraph(graph);
     pt::time_duration timeGPUCPU = pt::microsec_clock::local_time() - startTimeGPUCPU;
     printf("\nrunDijkstra - CPU Time: %f s\n", (float)timeGPUCPU.total_milliseconds() / 1000.0f);
 }
 
 
-void TravelTool::dijkstra_thread(Graph* graph,
+void TravelTool::dijkstra_thread(CPUGraph* graph,
                                  const std::vector<int>& query_indexes,
                                  int* results,
                                  const std::vector<std::pair<int, int> >& query_to_node,
@@ -539,7 +605,8 @@ void TravelTool::dijkstra_thread(Graph* graph,
     //const std::vector<std::pair<int, int> >& query_to_node,
     //boost::unordered_map<int, std::vector<int> >& node_to_query
     for (size_t i=a; i<=b; ++i) {
-        dijkstra(graph, query_indexes[i], results, query_to_node, node_to_query);
+        dijkstra(graph, query_indexes[i], results, query_to_node,
+                 node_to_query, 0);
     }
 }
 

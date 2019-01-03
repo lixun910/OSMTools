@@ -190,7 +190,7 @@ struct AdjList
 
 // A structure to represent a graph. A graph is an array of adjacency lists.
 // Size of array will be V (number of vertices in graph)
-struct Graph
+struct CPUGraph
 {
     int V;
     struct AdjList* array;
@@ -212,13 +212,14 @@ struct MinHeap
     struct MinHeapNode **array;
 };
 
-struct Graph* createGraph(int V);
+struct CPUGraph* createGraph(int V);
 
-void addEdgeToGraph(struct Graph* graph, int src, int dest, int weight);
+void addEdgeToGraph(struct CPUGraph* graph, int src, int dest, int weight);
 
-void dijkstra(struct Graph* graph, int src, int* results,
+void dijkstra(struct CPUGraph* graph, int src, int* results,
               const std::vector<std::pair<int, int> >& query_to_node,
-              boost::unordered_map<int, std::vector<int> >& node_to_query);
+              boost::unordered_map<int, std::vector<int> >& node_to_query,
+              int* path = 0);
 
-void freeGraph(Graph* graph);
+void freeGraph(CPUGraph* graph);
 #endif // DIJKSTRA_KERNEL_H

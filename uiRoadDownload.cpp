@@ -18,8 +18,10 @@ uiRoadDownload::uiRoadDownload(const wxString& title)
 
 uiRoadDownload::uiRoadDownload(double top, double bottom,
         double left, double right, const wxString &title)
-    : uiRoadDownload(title)
+    : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(500, 250))
 {
+    InitControls();
+
     wxString s_top, s_bottom, s_left, s_right;
     s_top << top;
     s_bottom << bottom;
@@ -171,7 +173,7 @@ void uiRoadDownload::OnOKClick(wxCommandEvent& event)
         roads.SaveToShapefile(shp_fpath);
     }
 
-    wxMessageDialog msg_dlg(this, "Save OSM roads to file successfully.",
+    wxMessageDialog msg_dlg(this, _("Save OSM roads to file successfully."),
                             _("Info"),
                             wxOK | wxOK_DEFAULT | wxICON_INFORMATION);
     msg_dlg.ShowModal();
