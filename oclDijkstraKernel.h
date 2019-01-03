@@ -29,7 +29,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <limits.h> 
+#include <limits.h>
+#include <boost/unordered_map.hpp>
 
 #ifdef __APPLE__
     #include <OpenCL/cl.h>
@@ -46,7 +47,6 @@ bool maskArrayEmpty(int *maskArray, int count);
 ///
 //  Types
 //
-
 
 ///
 //  Utility functions adapted from NVIDIA GPU Computing SDK
@@ -113,29 +113,6 @@ typedef struct
 } DevicePlan;
 
 
-
-///
-/// Run Dijkstra's shortest path on the GraphData provided to this function.  This
-/// function will compute the shortest path distance from sourceVertices[n] ->
-/// endVertices[n] and store the cost in outResultCosts[n].  The number of results
-/// it will compute is given by numResults.
-///
-/// This version of the function will run the algorithm on either just the CPU,
-/// CPU + GPU, GPU, or Multi GPU depending on what compute resources are available
-/// on the system.
-///
-/// \param graph Structure containing the vertex, edge, and weight arra
-///              for the input graph
-/// \param startVertices Indices into the vertex array from which to
-///                      start the search
-/// \param outResultsCosts A pre-allocated array where the results for
-///                        each shortest path search will be written.
-///                        This must be sized numResults * graph->numVertices.
-/// \param numResults Should be the size of all three passed inarrays
-///
-void runDijkstraOpenCL( GraphData* graph, int *sourceVertices,
-                        int *outResultCosts, int numResults );
-
 ///
 /// Run Dijkstra's shortest path on the GraphData provided to this function.  This
 /// function will compute the shortest path distance from sourceVertices[n] ->
@@ -159,7 +136,9 @@ void runDijkstraOpenCL( GraphData* graph, int *sourceVertices,
 /// \param numResults Should be the size of all three passed inarrays
 ///
 void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
-                  int *sourceVertices, int *outResultCosts, int numResults );
+                  int *sourceVertices, int *results, int numResults,
+                  const std::vector<std::pair<int, int> >& query_to_node,
+                  boost::unordered_map<int, std::vector<int> >& node_to_query);
 
 
 ///
@@ -183,67 +162,18 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
 /// \param numResults Should be the size of all three passed inarrays
 ///
 ///
-void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVertices,
-                          int *outResultCosts, int numResults );
-
-///
-/// Run Dijkstra's shortest path on the GraphData provided to this function.  This
-/// function will compute the shortest path distance from sourceVertices[n] ->
-/// endVertices[n] and store the cost in outResultCosts[n].  The number of results
-/// it will compute is given by numResults.
-///
-/// This function will run the algorithm on as many GPUs as is available along with
-/// the CPU.  It will create N threads, one for each device, and chunk the workload up to perform
-/// (numResults / N) searches per device.
-///
-/// \param gpuContext Current GPU context, must be created by caller
-/// \param cpuContext Current CPU context, must be created by caller
-/// \param graph Structure containing the vertex, edge, and weight arra
-///              for the input graph
-/// \param startVertices Indices into the vertex array from which to
-///                      start the search
-/// \param outResultsCosts A pre-allocated array where the results for
-///                        each shortest path search will be written.
-///                        This must be sized numResults * graph->numVertices.
-/// \param numResults Should be the size of all three passed inarrays
-///
-///
-void runDijkstraMultiGPUandCPU( const char* cl_dir, cl_context gpuContext, cl_context cpuContext, GraphData* graph,
-                                int *sourceVertices, int *outResultCosts, int numResults );
-
-
-///
-/// Run Dijkstra's shortest path on the GraphData provided to this function.  This
-/// function will compute the shortest path distance from sourceVertices[n] ->
-/// endVertices[n] and store the cost in outResultCosts[n].  The number of results
-/// it will compute is given by numResults.
-///
-/// This is a CPU *REFERENCE* implementation for use as a fallback.
-///
-/// \param graph Structure containing the vertex, edge, and weight arra
-///              for the input graph
-/// \param startVertices Indices into the vertex array from which to
-///                      start the search
-/// \param outResultsCosts A pre-allocated array where the results for
-///                        each shortest path search will be written.
-///                        This must be sized numResults * graph->numVertices.
-/// \param numResults Should be the size of all three passed inarrays
-///
-void runDijkstraMT ( GraphData* graph, int *sourceVertices,
-                     int *outResultCosts, int numResults );
-
-void runDijkstraRef( GraphData* graph, int *sourceVertices,
-                     int *outResultCosts, int start, int end);
-
-void runSSSPGPU(const char* cl_dir, cl_context gpuContext, cl_context cpuContext, GraphData* graph,
-                int *sourceVertices, int *outResultCosts, int numResults );
-
-void runSSSP( const char* dir, cl_context context, cl_device_id deviceId, GraphData* graph,
-             int *sourceVertices, int *outResultCosts, int numResults);
+void runDijkstraMultiGPU( const char* dir, cl_context gpuContext,
+                          GraphData* graph, int *sourceVertices,
+                          int *outResultCosts, int numResults,
+                const std::vector<std::pair<int, int> >& query_to_node,
+                boost::unordered_map<int, std::vector<int> >& node_to_query);
 
 
 ///////////////////
-
+/// The following code is a implementation of Dijkstra using minheap and
+/// AdjacentList structure to get o(nlog(n)) time complexity
+///
+///
 // A structure to represent a node in adjacency list
 struct AdjListNode
 {
@@ -286,7 +216,9 @@ struct Graph* createGraph(int V);
 
 void addEdgeToGraph(struct Graph* graph, int src, int dest, int weight);
 
-void dijkstra(struct Graph* graph, int src, int i_result, int* results);
+void dijkstra(struct Graph* graph, int src, int* results,
+              const std::vector<std::pair<int, int> >& query_to_node,
+              boost::unordered_map<int, std::vector<int> >& node_to_query);
 
 void freeGraph(Graph* graph);
 #endif // DIJKSTRA_KERNEL_H

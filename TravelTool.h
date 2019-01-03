@@ -31,11 +31,19 @@ namespace OSMTools {
     protected:
 
         void PreprocessRoads();
+        
+        void ComputeDistMatrix(int* results);
+        
+        void ComputeDistMatrixCPU(int* results, int query_size, int nCPUs);
 
-        void ComputeDistMatrixGPU();
+        void ComputeDistMatrixGPU(int* results, int query_size, int offset);
 
-        void dijkstra_thread(Graph* graph, int* query_indexes,
-                             int* results, int a, int b);
+        void dijkstra_thread(Graph* graph,
+                             const std::vector<int>& query_indexes,
+                             int* results,
+                             const std::vector<std::pair<int, int> >& query_to_node,
+                             boost::unordered_map<int, std::vector<int> >& node_to_query,
+                             int a, int b);
         
         bool MergeTwoWaysByStart(int w1, int w2);
 
@@ -57,27 +65,25 @@ namespace OSMTools {
         wxString GetExeDir();
 
         bool SaveQueryResults(const char* file_path,
-                              size_t num_nodes, int* results,
-            const std::vector<std::pair<int, int> >& query_to_node);
+                              int n_query, int* results,
+                              const std::vector<wxString>& query_ids);
     
+        int DetectGPU();
+        
     protected:
-        GraphData graph;
+        
         ANNkd_tree* kd_tree;
 
+        float ratio_cpu_to_gpu;
+        int  num_gpus;
+        int  num_cores;
+        
         int  num_nodes;
         int  num_edges;
-
-        //int *results;
-
-        int* vertex_array;
-        int* edge_array;
-        int* weight_array;
-        double** query_xy;
 
         std::vector<OGRFeature*> roads;
 
         std::vector<OGRFeature*> query_points;
-
 
         std::vector<std::vector<OGRPoint> > edges;
 
@@ -107,8 +113,11 @@ namespace OSMTools {
         boost::unordered_map<int, bool> anchor_points;
 
         // anchor point idx : [idx-in-query_nodes]
-        boost::unordered_map<int, std::vector<int> > source_dict;
+        boost::unordered_map<int, std::vector<int> > node_to_query;
 
+        // idx-in-query : [anchor point idx, cost]
+        std::vector<std::pair<int, int> > query_to_node;
+        
         // final query nodes for dijkstra
         std::vector<int> query_nodes;
 

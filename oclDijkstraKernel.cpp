@@ -184,7 +184,8 @@ void allocateOCLBuffers(cl_context gpuContext, cl_command_queue commandQueue, Gr
 ///
 /// Initialize OpenCL buffers for single run of Dijkstra
 ///
-void initializeOCLBuffers(cl_command_queue commandQueue, cl_kernel initializeKernel, GraphData *graph,
+void initializeOCLBuffers(cl_command_queue commandQueue,
+                          cl_kernel initializeKernel, GraphData *graph,
                           size_t maxWorkGroupSize)
 {
     cl_int errNum;
@@ -192,18 +193,10 @@ void initializeOCLBuffers(cl_command_queue commandQueue, cl_kernel initializeKer
     size_t localWorkSize = maxWorkGroupSize;
     size_t globalWorkSize = roundWorkSizeUp(localWorkSize, graph->vertexCount);
 
-    errNum = clEnqueueNDRangeKernel(commandQueue, initializeKernel, 1, NULL, &globalWorkSize, &localWorkSize,
+    errNum = clEnqueueNDRangeKernel(commandQueue, initializeKernel, 1,
+                                    NULL, &globalWorkSize, &localWorkSize,
                                     0, NULL, NULL);
     checkError(errNum, CL_SUCCESS);
-}
-
-///
-/// Worker thread for running the algorithm on one of the compute devices
-///
-void dijkstraThread(DevicePlan *plan)
-{
-    runDijkstra( plan->context, plan->deviceId, plan->graph, plan->sourceVertices,
-                 plan->outResultCosts, plan->numResults );
 }
 
 ///
@@ -215,7 +208,8 @@ cl_device_id getDev(cl_context cxGPUContext, unsigned int nr)
     cl_device_id* cdDevices;
 
     // get the list of GPU devices associated with context
-    clGetContextInfo(cxGPUContext, CL_CONTEXT_DEVICES, 0, NULL, &szParmDataBytes);
+    clGetContextInfo(cxGPUContext, CL_CONTEXT_DEVICES, 0, NULL,
+                     &szParmDataBytes);
 
     if( szParmDataBytes / sizeof(cl_device_id) < nr )
     {
@@ -224,7 +218,8 @@ cl_device_id getDev(cl_context cxGPUContext, unsigned int nr)
 
     cdDevices = (cl_device_id*) malloc(szParmDataBytes);
 
-    clGetContextInfo(cxGPUContext, CL_CONTEXT_DEVICES, szParmDataBytes, cdDevices, NULL);
+    clGetContextInfo(cxGPUContext, CL_CONTEXT_DEVICES, szParmDataBytes,
+                     cdDevices, NULL);
 
     cl_device_id device = cdDevices[nr];
     free(cdDevices);
@@ -242,10 +237,12 @@ cl_device_id getFirstDev(cl_context cxGPUContext)
     cl_device_id* cdDevices;
 
     // get the list of GPU devices associated with context
-    clGetContextInfo(cxGPUContext, CL_CONTEXT_DEVICES, 0, NULL, &szParmDataBytes);
+    clGetContextInfo(cxGPUContext, CL_CONTEXT_DEVICES, 0, NULL,
+                     &szParmDataBytes);
     cdDevices = (cl_device_id*) malloc(szParmDataBytes);
 
-    clGetContextInfo(cxGPUContext, CL_CONTEXT_DEVICES, szParmDataBytes, cdDevices, NULL);
+    clGetContextInfo(cxGPUContext, CL_CONTEXT_DEVICES, szParmDataBytes,
+                     cdDevices, NULL);
 
     cl_device_id first = cdDevices[0];
     free(cdDevices);
@@ -312,7 +309,8 @@ cl_device_id getMaxFlopsDev(cl_context cxGPUContext)
 /// Check for error condition and exit if found.  Print file and line number
 /// of error. (from NVIDIA SDK)
 ///
-void checkErrorFileLine(int errNum, int expected, const char* file, const int lineNumber)
+void checkErrorFileLine(int errNum, int expected, const char* file,
+                        const int lineNumber)
 {
     if (errNum != expected)
     {
@@ -337,115 +335,11 @@ int roundWorkSizeUp(int groupSize, int globalSize)
         return globalSize + groupSize - remainder;
     }
 }
-///////////////////////////////////////////////////////////////////////////////
-//
-//  Public Functions
-//
-//
 
-///
-/// Run Dijkstra's shortest path on the GraphData provided to this function.  This
-/// function will compute the shortest path distance from sourceVertices[n] ->
-/// endVertices[n] and store the cost in outResultCosts[n].  The number of results
-/// it will compute is given by numResults.
-///
-/// This version of the function will run the algorithm on either just the CPU,
-/// CPU + GPU, GPU, or Multi GPU depending on what compute resources are available
-/// on the system.
-///
-/// \param graph Structure containing the vertex, edge, and weight arra
-///              for the input graph
-/// \param startVertices Indices into the vertex array from which to
-///                      start the search
-/// \param outResultsCosts A pre-allocated array where the results for
-///                        each shortest path search will be written.
-///                        This must be sized numResults * graph->numVertices.
-/// \param numResults Should be the size of all three passed inarrays
-///
-void runDijkstraOpenCL( GraphData* graph, int *sourceVertices,
-                        int *outResultCosts, int numResults )
-{
-    // See what kind of devices are available
-    cl_int errNum;
-    cl_context cpuContext;
-    cl_context gpuContext;
-
-    // create the OpenCL context on available GPU devices
-    gpuContext = clCreateContextFromType(0, CL_DEVICE_TYPE_GPU, NULL, NULL, &errNum);
-
-    // Create an OpenCL context on available CPU devices
-    cpuContext = clCreateContextFromType(0, CL_DEVICE_TYPE_CPU, NULL, NULL, &errNum);
-
-    if (cpuContext == 0 && gpuContext == 0)
-    {
-        cerr << "ERROR: could not create any OpenCL context on CPU or GPU" << endl;
-        return;
-    }
-
-    // For just a single result, just use multi-threaded CPU or single GPU
-    if (numResults == 1)
-    {
-        if (gpuContext != 0)
-        {
-            cout << "Dijkstra OpenCL: Running single GPU version." << endl;
-            runDijkstra(gpuContext, getMaxFlopsDev(gpuContext), graph, sourceVertices,
-                        outResultCosts, numResults);
-        }
-        else
-        {
-            cout << "Dijkstra OpenCL: Running multithreaded CPU version." << endl;
-            runDijkstra(cpuContext, getMaxFlopsDev(cpuContext), graph, sourceVertices,
-                        outResultCosts, numResults);
-        }
-    }
-    // For multiple results, prefer multi-GPU and fallback to CPU
-    else
-    {
-        // Prefer Multi-GPU if multiple GPUs are available
-        if (gpuContext != 0)
-        {
-            cout << "Dijkstra OpenCL: Running multi-GPU version." << endl;
-            runDijkstraMultiGPU( gpuContext, graph, sourceVertices,
-                                 outResultCosts, numResults );
-        }
-        // For now, fallback to CPU in this case.  I have a multi GPU+CPU path
-        // but it does not seem to perform well because of the CPU overhead of
-        // running the GPU version slows down the CPU version.
-        else
-        {
-            cout << "Dijkstra OpenCL: Running multithreaded CPU version." << endl;
-            runDijkstra(cpuContext, getMaxFlopsDev(cpuContext), graph, sourceVertices,
-                        outResultCosts, numResults);
-        }
-    }
-
-    clReleaseContext(cpuContext);
-    clReleaseContext(gpuContext);
-}
-
-///
-/// Run Dijkstra's shortest path on the GraphData provided to this function.  This
-/// function will compute the shortest path distance from sourceVertices[n] ->
-/// endVertices[n] and store the cost in outResultCosts[n].  The number of results
-/// it will compute is given by numResults.
-///
-/// This function will run the algorithm on a single GPU.
-///
-/// \param gpuContext Current context, must be created by caller
-/// \param deviceId The device ID on which to run the kernel.  This can
-///                 be determined externally by the caller or the multi
-///                 GPU version will automatically split the work across
-///                 devices
-/// \param graph Structure containing the vertex, edge, and weight arra
-///              for the input graph
-/// \param startVertices Indices into the vertex array from which to
-///                      start the search
-/// \param outResultsCosts A pre-allocated array where the results for
-///                        each shortest path search will be written
-/// \param numResults Should be the size of all three passed inarrays
-///
 void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
-                  int *sourceVertices, int *outResultCosts, int numResults)
+                  int *sourceVertices, int *results, int numResults,
+                  const std::vector<std::pair<int, int> >& query_to_node,
+                  boost::unordered_map<int, std::vector<int> >& node_to_query)
 {
     // Create command queue
     cl_int errNum;
@@ -458,7 +352,8 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
 
     // Get the max workgroup size
     size_t maxWorkGroupSize;
-    clGetDeviceInfo(deviceId, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t), &maxWorkGroupSize, NULL);
+    clGetDeviceInfo(deviceId, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t),
+                    &maxWorkGroupSize, NULL);
 
     cl_device_type dev_type;
     clGetDeviceInfo(deviceId, CL_DEVICE_TYPE, sizeof(dev_type), &dev_type, NULL);
@@ -480,22 +375,28 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
     cl_mem updatingCostArrayDevice;
 
     // Allocate buffers in Device memory
-    allocateOCLBuffers( context, commandQueue, graph, &vertexArrayDevice, &edgeArrayDevice, &weightArrayDevice,
-                        &maskArrayDevice, &costArrayDevice, &updatingCostArrayDevice, globalWorkSize);
+    allocateOCLBuffers( context, commandQueue, graph, &vertexArrayDevice,
+                        &edgeArrayDevice, &weightArrayDevice,
+                        &maskArrayDevice, &costArrayDevice,
+                        &updatingCostArrayDevice, globalWorkSize);
 
 
     // Create the Kernels
     cl_kernel initializeBuffersKernel;
-    initializeBuffersKernel = clCreateKernel(program, "initializeBuffers", &errNum);
+    initializeBuffersKernel = clCreateKernel(program, "initializeBuffers",
+                                             &errNum);
     checkError(errNum, CL_SUCCESS);
 
     // Set the args values and check for errors
-    errNum |= clSetKernelArg(initializeBuffersKernel, 0, sizeof(cl_mem), &maskArrayDevice);
-    errNum |= clSetKernelArg(initializeBuffersKernel, 1, sizeof(cl_mem), &costArrayDevice);
+    errNum |= clSetKernelArg(initializeBuffersKernel, 0, sizeof(cl_mem),
+                             &maskArrayDevice);
+    errNum |= clSetKernelArg(initializeBuffersKernel, 1, sizeof(cl_mem),
+                             &costArrayDevice);
     errNum |= clSetKernelArg(initializeBuffersKernel, 2, sizeof(cl_mem), &updatingCostArrayDevice);
 
     // 3 set below in loop
-    errNum |= clSetKernelArg(initializeBuffersKernel, 4, sizeof(int), &graph->vertexCount);
+    errNum |= clSetKernelArg(initializeBuffersKernel, 4, sizeof(int),
+                             &graph->vertexCount);
     checkError(errNum, CL_SUCCESS);
 
     // Kernel 1
@@ -527,19 +428,21 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
     checkError(errNum, CL_SUCCESS);
 
     int *maskArrayHost = (int*) malloc(sizeof(int) * graph->vertexCount);
+    int *costsArray = (int*) malloc(sizeof(int) * graph->vertexCount);
+    for ( size_t i = 0 ; i < numResults; i++ ) {
 
-    for ( size_t i = 0 ; i < numResults; i++ )
-    {
-
-        errNum |= clSetKernelArg(initializeBuffersKernel, 3, sizeof(int), &sourceVertices[i]);
+        errNum |= clSetKernelArg(initializeBuffersKernel, 3, sizeof(int),
+                                 &sourceVertices[i]);
         checkError(errNum, CL_SUCCESS);
 
         // Initialize mask array to false, C and U to infiniti
-        initializeOCLBuffers( commandQueue, initializeBuffersKernel, graph, maxWorkGroupSize );
+        initializeOCLBuffers( commandQueue, initializeBuffersKernel, graph,
+                             maxWorkGroupSize );
 
         // Read mask array from device -> host
         cl_event readDone;
-        errNum = clEnqueueReadBuffer( commandQueue, maskArrayDevice, CL_FALSE, 0, sizeof(int) * graph->vertexCount,
+        errNum = clEnqueueReadBuffer( commandQueue, maskArrayDevice, CL_FALSE,
+                                      0, sizeof(int) * graph->vertexCount,
                                       maskArrayHost, 0, NULL, &readDone);
         checkError(errNum, CL_SUCCESS);
         clWaitForEvents(1, &readDone);
@@ -551,35 +454,62 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
             // without reading the results.  This might result in running more iterations
             // than necessary at times, but it will in most cases be faster because
             // we are doing less stalling of the GPU waiting for results.
-            for(int asyncIter = 0; asyncIter < NUM_ASYNCHRONOUS_ITERATIONS; asyncIter++)
+            for(int asyncIter = 0; asyncIter < NUM_ASYNCHRONOUS_ITERATIONS;
+                asyncIter++)
             {
                 size_t localWorkSize = maxWorkGroupSize;
-                size_t globalWorkSize = roundWorkSizeUp(localWorkSize, graph->vertexCount);
+                size_t globalWorkSize = roundWorkSizeUp(localWorkSize,
+                                                        graph->vertexCount);
 
                 // execute the kernel
-                errNum = clEnqueueNDRangeKernel(commandQueue, ssspKernel1, 1, 0, &globalWorkSize, &localWorkSize,
-                                               0, NULL, NULL);
+                errNum = clEnqueueNDRangeKernel(commandQueue, ssspKernel1, 1, 0,
+                                                &globalWorkSize, &localWorkSize,
+                                                0, NULL, NULL);
                 checkError(errNum, CL_SUCCESS);
 
-                errNum = clEnqueueNDRangeKernel(commandQueue, ssspKernel2, 1, 0, &globalWorkSize, &localWorkSize,
-                                               0, NULL, NULL);
+                errNum = clEnqueueNDRangeKernel(commandQueue, ssspKernel2, 1, 0,
+                                                &globalWorkSize, &localWorkSize,
+                                                0, NULL, NULL);
                 checkError(errNum, CL_SUCCESS);
             }
-            errNum = clEnqueueReadBuffer(commandQueue, maskArrayDevice, CL_FALSE, 0, sizeof(int) * graph->vertexCount,
+            errNum = clEnqueueReadBuffer(commandQueue, maskArrayDevice,
+                                         CL_FALSE, 0,
+                                         sizeof(int) * graph->vertexCount,
                                          maskArrayHost, 0, NULL, &readDone);
             checkError(errNum, CL_SUCCESS);
             clWaitForEvents(1, &readDone);
         }
 
         // Copy the result back
-        size_t offset = i * (size_t)graph->vertexCount;
-        errNum = clEnqueueReadBuffer(commandQueue, costArrayDevice, CL_FALSE, 0, sizeof(int) * graph->vertexCount,
-                                     &outResultCosts[offset], 0, NULL, &readDone);
+        errNum = clEnqueueReadBuffer(commandQueue, costArrayDevice, CL_FALSE, 0,
+                                     sizeof(int) * graph->vertexCount,
+                                     costsArray, 0, NULL, &readDone);
         checkError(errNum, CL_SUCCESS);
         clWaitForEvents(1, &readDone);
+        
+        size_t j, k, offset, n_query;
+        int node_idx, cost, src = sourceVertices[i];
+        std::vector<int>& query_idx = node_to_query[src];
+        n_query = query_to_node.size();
+        
+        for (j=0; j<query_idx.size(); ++j) {
+            offset = (size_t)query_idx[j] * n_query;
+            for (k=0; k<n_query; ++k) {
+                if (query_idx[j] == k) {
+                    results[offset+k] = 0;
+                } else {
+                    node_idx = query_to_node[k].first;
+                    cost = costsArray[node_idx];
+                    cost += query_to_node[k].second;
+                    cost += query_to_node[query_idx[j]].second;
+                    results[offset+k] = cost;
+                }
+            }
+        }
     }
 
     free (maskArrayHost);
+    free (costsArray);
 
     clReleaseMemObject(vertexArrayDevice);
     clReleaseMemObject(edgeArrayDevice);
@@ -599,33 +529,14 @@ void runDijkstra( cl_context context, cl_device_id deviceId, GraphData* graph,
 }
 
 
-
-///
-/// Run Dijkstra's shortest path on the GraphData provided to this function.  This
-/// function will compute the shortest path distance from sourceVertices[n] ->
-/// endVertices[n] and store the cost in outResultCosts[n].  The number of results
-/// it will compute is given by numResults.
-///
-/// This function will run the algorithm on as many GPUs as is available.  It will
-/// create N threads, one for each GPU, and chunk the workload up to perform
-/// (numResults / N) searches per GPU.
-///
-/// \param gpuContext Current GPU context, must be created by caller
-/// \param graph Structure containing the vertex, edge, and weight arra
-///              for the input graph
-/// \param startVertices Indices into the vertex array from which to
-///                      start the search
-/// \param endVertices Indices into the vertex array from which to end
-///                    the search.
-/// \param outResultsCosts A pre-allocated array where the results for
-///                        each shortest path search will be written
-/// \param numResults Should be the size of all three passed inarrays
-///
-///
-void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVertices,
-                          int *outResultCosts, int numResults )
+void runDijkstraMultiGPU( const char* dir, cl_context gpuContext,
+                          GraphData* graph, int *sourceVertices,
+                          int *outResultCosts, int numResults,
+                    const std::vector<std::pair<int, int> >& query_to_node,
+                    boost::unordered_map<int, std::vector<int> >& node_to_query)
 {
-
+    strcpy(cl_dir, dir);
+    
     // Find out how many GPU's to compute on all available GPUs
     cl_int errNum;
     size_t deviceBytes;
@@ -635,15 +546,12 @@ void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVe
     checkError(errNum, CL_SUCCESS);
     deviceCount = (cl_uint)deviceBytes/sizeof(cl_device_id);
 
-    if (deviceCount == 0)
-    {
+    if (deviceCount == 0) {
         cerr << "ERROR: no GPUs present!" << endl;
         return;
     }
 
     DevicePlan *devicePlans = (DevicePlan*) malloc(sizeof(DevicePlan) * deviceCount);
-    //pthread_t *threadIDs = (pthread_t*) malloc(sizeof(pthread_t) * deviceCount);
-
     boost::thread* bthread[deviceCount];
 
     // Divide the workload out per device
@@ -651,150 +559,48 @@ void runDijkstraMultiGPU( cl_context gpuContext, GraphData* graph, int *sourceVe
 
     size_t offset = 0;
 
-    for (unsigned int i = 0; i < deviceCount; i++)
-    {
+    for (unsigned int i = 0; i < deviceCount; i++) {
         devicePlans[i].context = gpuContext;
-        devicePlans[i].deviceId = getDev(gpuContext, i);;
+        devicePlans[i].deviceId = getDev(gpuContext, i);
         devicePlans[i].graph = graph;
         devicePlans[i].sourceVertices = &sourceVertices[offset];
-        devicePlans[i].outResultCosts = &outResultCosts[offset * (size_t)graph->vertexCount];
+        devicePlans[i].outResultCosts = outResultCosts;
         devicePlans[i].numResults = resultsPerDevice;
 
         offset += resultsPerDevice;
     }
 
     // Add any remaining work to the last GPU
-    if (offset < numResults)
-    {
+    if (offset < numResults) {
         devicePlans[deviceCount - 1].numResults += (numResults - offset);
     }
 
     // Launch all the threads
-    for (unsigned int i = 0; i < deviceCount; i++)
-    {
-        //pthread_create(&threadIDs[i], NULL, (void* (*)(void*))dijkstraThread, (void*)(devicePlans + i));
-        bthread[i] = new boost::thread(&dijkstraThread, (DevicePlan*)(devicePlans + i));
+    for (unsigned int i = 0; i < deviceCount; i++) {
+        bthread[i] = new boost::thread(&runDijkstra,
+                                       (cl_context) devicePlans[i].context,
+                                       (cl_device_id) devicePlans[i].deviceId,
+                                       (GraphData*) devicePlans[i].graph,
+                                       (int*) devicePlans[i].sourceVertices,
+                                       (int*) devicePlans[i].outResultCosts,
+                                       devicePlans[i].numResults,
+                                       boost::ref(query_to_node),
+                                       boost::ref(node_to_query));
     }
 
     // Wait for the results from all threads
-    for (unsigned int i = 0; i < deviceCount; i++)
-    {
-        //pthread_join(threadIDs[i], NULL);
+    for (unsigned int i = 0; i < deviceCount; i++) {
         bthread[i]->join();
     }
 
-    for (unsigned int i = 0; i < deviceCount; i++)
-    {
+    for (unsigned int i = 0; i < deviceCount; i++) {
         delete bthread[i];
     }
 
     free (devicePlans);
-    //free (threadIDs);
 }
 
-///
-/// Run Dijkstra's shortest path on the GraphData provided to this function.  This
-/// function will compute the shortest path distance from sourceVertices[n] ->
-/// endVertices[n] and store the cost in outResultCosts[n].  The number of results
-/// it will compute is given by numResults.
-///
-/// This function will run the algorithm on as many GPUs as is available along with
-/// the CPU.  It will create N threads, one for each device, and chunk the workload up to perform
-/// (numResults / N) searches per device.
-///
-/// \param gpuContext Current GPU context, must be created by caller
-/// \param cpuContext Current CPU context, must be created by caller
-/// \param graph Structure containing the vertex, edge, and weight arra
-///              for the input graph
-/// \param startVertices Indices into the vertex array from which to
-///                      start the search
-/// \param outResultsCosts A pre-allocated array where the results for
-///                        each shortest path search will be written
-/// \param numResults Should be the size of all three passed inarrays
-///
-///
-void runDijkstraMultiGPUandCPU( const char* dir, cl_context gpuContext, cl_context cpuContext, GraphData* graph,
-                                int *sourceVertices,
-                                int *outResultCosts, int numResults )
-{
-    strcpy(cl_dir, dir);
-    float ratioCPUtoGPU = 0.3; // CPU seems to run it at 2.26X on GT120 GPU
 
-
-    // Find out how many GPU's to compute on all available GPUs
-    cl_int errNum;
-    size_t deviceBytes;
-    cl_uint gpuDeviceCount;
-    cl_uint cpuDeviceCount;
-
-    errNum = clGetContextInfo(gpuContext, CL_CONTEXT_DEVICES, 0, NULL, &deviceBytes);
-    checkError(errNum, CL_SUCCESS);
-    gpuDeviceCount = (cl_uint)deviceBytes/sizeof(cl_device_id);
-
-    if (gpuDeviceCount == 0) {
-        cerr << "ERROR: no GPUs present!" << endl;
-        return;
-    }
-
-    cl_uint totalDeviceCount = gpuDeviceCount + 1;
-
-    DevicePlan *devicePlans = (DevicePlan*) malloc(sizeof(DevicePlan) * totalDeviceCount);
-    boost::thread* bthread[totalDeviceCount];
-
-    int cpuResults = numResults * (ratioCPUtoGPU);
-    cout << "cpuResults: " << cpuResults << endl;
-
-    int gpuResults = numResults - cpuResults;
-    cout << "gpuResults: " << gpuResults << endl;
-
-    // run on GPUs:
-    // Divide the workload out per device
-    int resultsPerGPU = gpuResults / gpuDeviceCount;
-    int curDevice = 0;
-    int offset = cpuResults;
-    for (unsigned int i = 0; i < gpuDeviceCount; i++) {
-        devicePlans[curDevice].context = gpuContext;
-        devicePlans[curDevice].deviceId = getDev(gpuContext, i);;
-        devicePlans[curDevice].graph = graph;
-        devicePlans[curDevice].sourceVertices = &sourceVertices[offset];
-        devicePlans[curDevice].outResultCosts = &outResultCosts[(size_t)offset * (size_t)graph->vertexCount];
-        devicePlans[curDevice].numResults = resultsPerGPU;
-
-        offset += resultsPerGPU;
-        curDevice++;
-    }
-
-    // Add any remaining work to the last GPU
-    if (offset < numResults) {
-        devicePlans[gpuDeviceCount - 1].numResults += (numResults - offset);
-    }
-
-    // Launch all the threads
-    for (unsigned int i = 0; i < gpuDeviceCount; i++) {
-        bthread[i] = new boost::thread(&dijkstraThread, (DevicePlan*)(devicePlans + i));
-    }
-    // run on CPU
-    bthread[totalDeviceCount-1] = new boost::thread(
-            boost::bind(&runDijkstraMT, graph, sourceVertices, outResultCosts, cpuResults));
-
-    // Wait for the results from all threads
-    for (unsigned int i = 0; i < totalDeviceCount; i++) {
-        bthread[i]->join();
-    }
-
-    for (unsigned int i = 0; i < totalDeviceCount; i++) {
-        delete bthread[i];
-    }
-    free (devicePlans);
-}
-
-void runDijkstraCPUOnly( const char* dir, GraphData* graph,
-                               int *sourceVertices,
-                               int *outResultCosts, int numResults )
-{
-    strcpy(cl_dir, dir);
-
-}
 ///
 /// Check whether the mask array is empty.  This tells the algorithm whether
 /// it needs to continue running or not.
@@ -812,23 +618,7 @@ bool maskArrayEmpty(int *maskArray, int count)
     return true;
 }
 
-///
-/// Run Dijkstra's shortest path on the GraphData provided to this function.  This
-/// function will compute the shortest path distance from sourceVertices[n] ->
-/// endVertices[n] and store the cost in outResultCosts[n].  The number of results
-/// it will compute is given by numResults.
-///
-/// This is a CPU *REFERENCE* implementation for use as a fallback.
-///
-/// \param graph Structure containing the vertex, edge, and weight arra
-///              for the input graph
-/// \param startVertices Indices into the vertex array from which to
-///                      start the search
-/// \param outResultsCosts A pre-allocated array where the results for
-///                        each shortest path search will be written.
-///                        This must be sized numResults * graph->numVertices.
-/// \param numResults Should be the size of all three passed inarrays
-///
+
 void runDijkstraRef( GraphData* graph, int *sourceVertices,
                      int *outResultCosts, int start, int end)
 {
@@ -915,312 +705,6 @@ void runDijkstraRef( GraphData* graph, int *sourceVertices,
     delete [] updatingCostArray;
     delete [] maskArray;
 }
-
-void runDijkstraMT(GraphData* graph, int *sourceVertices,
-                   int *outResultCosts, int numResults )
-{
-    cout << "CPU: Computing '" << numResults << "' results." << endl;
-    unsigned int nCPUs = boost::thread::hardware_concurrency();
-    int work_chunk = numResults / nCPUs;
-
-    if (work_chunk == 0) work_chunk = 1;
-
-    int obs_start = 0;
-    int obs_end = obs_start + work_chunk;
-    int quotient = numResults / nCPUs;
-    int remainder = numResults % nCPUs;
-    int tot_threads = (quotient > 0) ? nCPUs : remainder;
-
-    boost::thread* bthread[tot_threads];
-
-    for (unsigned int i=0; i<tot_threads; i++) {
-        int a=0;
-        int b=0;
-        if (i < remainder) {
-            a = i*(quotient+1);
-            b = a+quotient;
-        } else {
-            a = remainder*(quotient+1) + (i-remainder)*quotient;
-            b = a+quotient-1;
-        }
-
-        bthread[i] = new boost::thread(boost::bind(&runDijkstraRef, (GraphData*) graph,
-                (int*)sourceVertices, (int*)outResultCosts, a, b));
-    }
-    for (unsigned int i = 0; i < tot_threads; i++) {
-        bthread[i]->join();
-    }
-
-    for (unsigned int i = 0; i < tot_threads; i++) {
-        delete bthread[i];
-    }
-    cout << "CPU: Computed '" << numResults << "' results." << endl;
-}
-
-
-void ssspThread(DevicePlan *plan)
-{
-    //runSSSP( plan->context, plan->deviceId, plan->graph, plan->sourceVertices,
-    //            plan->outResultCosts, plan->numResults );
-}
-
-void runSSSPGPU(const char* dir, cl_context gpuContext, cl_context cpuContext, GraphData* graph,
-                int *sourceVertices, int *outResultCosts, int numResults )
-{
-    strcpy(cl_dir, dir);
-    float ratioCPUtoGPU = 0.45; // CPU seems to run it at 2.26X on GT120 GPU
-
-    // Find out how many GPU's to compute on all available GPUs
-    cl_int errNum;
-    size_t deviceBytes;
-    cl_uint gpuDeviceCount;
-    cl_uint cpuDeviceCount;
-
-    errNum = clGetContextInfo(gpuContext, CL_CONTEXT_DEVICES, 0, NULL, &deviceBytes);
-    checkError(errNum, CL_SUCCESS);
-    gpuDeviceCount = (cl_uint)deviceBytes/sizeof(cl_device_id);
-
-    if (gpuDeviceCount == 0) {
-        cerr << "ERROR: no GPUs present!" << endl;
-        return;
-    }
-
-    cl_uint totalDeviceCount = gpuDeviceCount + 1;
-
-    DevicePlan *devicePlans = (DevicePlan*) malloc(sizeof(DevicePlan) * totalDeviceCount);
-    boost::thread* bthread[totalDeviceCount];
-
-    int cpuResults = numResults * (ratioCPUtoGPU);
-    cout << "cpuResults: " << cpuResults << endl;
-
-    int gpuResults = numResults - cpuResults;
-    cout << "gpuResults: " << gpuResults << endl;
-
-    // run on GPUs:
-    // Divide the workload out per device
-    int resultsPerGPU = gpuResults / gpuDeviceCount;
-    int curDevice = 0;
-    int offset = cpuResults;
-    for (unsigned int i = 0; i < gpuDeviceCount; i++) {
-        devicePlans[curDevice].context = gpuContext;
-        devicePlans[curDevice].deviceId = getDev(gpuContext, i);;
-        devicePlans[curDevice].graph = graph;
-        devicePlans[curDevice].sourceVertices = &sourceVertices[offset];
-        devicePlans[curDevice].outResultCosts = &outResultCosts[(size_t)offset * (size_t)graph->vertexCount];
-        devicePlans[curDevice].numResults = resultsPerGPU;
-
-        offset += resultsPerGPU;
-        curDevice++;
-    }
-
-    // Add any remaining work to the last GPU
-    if (offset < numResults) {
-        devicePlans[gpuDeviceCount - 1].numResults += (numResults - offset);
-    }
-
-    // Launch all the threads
-    for (unsigned int i = 0; i < gpuDeviceCount; i++) {
-        bthread[i] = new boost::thread(&ssspThread, (DevicePlan*)(devicePlans + i));
-    }
-    // run on CPU
-    bthread[totalDeviceCount-1] = new boost::thread(
-                                                    boost::bind(&runDijkstraMT, graph, sourceVertices, outResultCosts, cpuResults));
-
-    // Wait for the results from all threads
-    for (unsigned int i = 0; i < totalDeviceCount; i++) {
-        bthread[i]->join();
-    }
-
-    for (unsigned int i = 0; i < totalDeviceCount; i++) {
-        delete bthread[i];
-    }
-    free (devicePlans);
-}
-
-char *replace_str1(char *str, char *orig, char *rep, int start)
-{
-    static char temp[4096];
-    static char buffer[4096];
-    char *p;
-
-    strcpy(temp, str + start);
-
-    if(!(p = strstr(temp, orig)))  // Is 'orig' even in 'temp'?
-        return temp;
-
-    strncpy(buffer, temp, p-temp); // Copy characters from 'temp' start to 'orig' str
-    buffer[p-temp] = '\0';
-
-    sprintf(buffer + (p - temp), "%s%s", rep, p + strlen(orig));
-    sprintf(str + start, "%s", buffer);
-
-    return str;
-}
-
-void runSSSP( const char* dir, cl_context context, cl_device_id deviceId, GraphData* graph,
-                 int *sourceVertices, int *outResultCosts, int numResults)
-{
-    strcpy(cl_dir, dir);
-
-    size_t results_size = (size_t)graph->vertexCount * (size_t)numResults;
-    // Create command queue
-    cl_int errNum;
-    cl_command_queue commandQueue;
-    commandQueue = clCreateCommandQueue( context, deviceId, 0, &errNum );
-    checkError(errNum, CL_SUCCESS);
-
-    // Program handle
-    cl_program program = loadAndBuildProgram( context, "sssp.cl" );
-/*
-    char *source_str;
-    size_t source_size;
-
-    char file_path[1024];
-    strncpy(file_path, cl_dir, 1024);
-    strcat(file_path, "sssp.cl");
-    FILE *fp = fopen(file_path, "r");
-    source_str = (char*)malloc(MAX_SOURCE_SIZE);
-    source_size = fread( source_str, 1, MAX_SOURCE_SIZE, fp);
-    fclose(fp);
-
-    char msg[25];
-#ifdef __WIN32__
-    _snprintf(msg, sizeof(msg), "%d", graph->vertexCount);
-#else
-    snprintf(msg, sizeof(msg), "%d", graph->vertexCount);
-#endif
-    replace_str1(source_str, "7777", msg, 0);
-    replace_str1(source_str, "8888", msg, 0);
-    replace_str1(source_str, "9999", msg, 0);
-    source_size = strlen(source_str);
-    cl_program program = clCreateProgramWithSource(context, 1, (const char **)&source_str, (const size_t *)&source_size, &errNum);
-*/
-    // Get the max workgroup size
-    size_t maxWorkGroupSize;
-    clGetDeviceInfo(deviceId, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t), &maxWorkGroupSize, NULL);
-
-    cl_device_type dev_type;
-    clGetDeviceInfo(deviceId, CL_DEVICE_TYPE, sizeof(dev_type), &dev_type, NULL);
-    if (dev_type == CL_DEVICE_TYPE_CPU) {
-        maxWorkGroupSize = 128;
-    }
-    checkError(errNum, CL_SUCCESS);
-    cout << "MAX_WORKGROUP_SIZE: " << maxWorkGroupSize << endl;
-    cout << "Computing '" << numResults << "' results." << endl;
-    // Set # of work items in work group and total in 1 dimensional range
-    size_t localWorkSize = maxWorkGroupSize;
-    size_t globalWorkSize = roundWorkSizeUp(localWorkSize, graph->vertexCount);
-
-    cl_mem vertexArrayDevice;
-    cl_mem edgeArrayDevice;
-    cl_mem weightArrayDevice;
-    cl_mem sourceArrayDevice;
-    cl_mem maskArrayDevice;
-    cl_mem costArrayDevice;
-    cl_mem updatingCostArrayDevice;
-    cl_mem resultArrayDevice;
-
-    // Allocate buffers in Device memory
-    cl_mem hostVertexArrayBuffer;
-    cl_mem hostEdgeArrayBuffer;
-    cl_mem hostWeightArrayBuffer;
-    cl_mem hostSourceArrayBuffer;
-
-    // First, need to create OpenCL Host buffers that can be copied to device buffers
-    hostVertexArrayBuffer = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR | CL_MEM_ALLOC_HOST_PTR,
-                                           sizeof(int) * graph->vertexCount, graph->vertexArray, &errNum);
-    checkError(errNum, CL_SUCCESS);
-    hostEdgeArrayBuffer = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR | CL_MEM_ALLOC_HOST_PTR,
-                                         sizeof(int) * graph->edgeCount, graph->edgeArray, &errNum);
-    checkError(errNum, CL_SUCCESS);
-    hostWeightArrayBuffer = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR | CL_MEM_ALLOC_HOST_PTR,
-                                           sizeof(int) * graph->edgeCount, graph->weightArray, &errNum);
-    checkError(errNum, CL_SUCCESS);
-    hostSourceArrayBuffer = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR | CL_MEM_ALLOC_HOST_PTR,
-                                           sizeof(int) * numResults, sourceVertices, &errNum);
-    checkError(errNum, CL_SUCCESS);
-    // Now create all of the GPU buffers
-    vertexArrayDevice = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(int) * globalWorkSize, NULL, &errNum);
-    checkError(errNum, CL_SUCCESS);
-    edgeArrayDevice = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(int) * graph->edgeCount, NULL, &errNum);
-    checkError(errNum, CL_SUCCESS);
-    weightArrayDevice = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(int) * graph->edgeCount, NULL, &errNum);
-    checkError(errNum, CL_SUCCESS);
-    sourceArrayDevice = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(int) * numResults, NULL, &errNum);
-    checkError(errNum, CL_SUCCESS);
-    maskArrayDevice = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(int) * globalWorkSize, NULL, &errNum);
-    checkError(errNum, CL_SUCCESS);
-    costArrayDevice = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(int) * globalWorkSize, NULL, &errNum);
-    checkError(errNum, CL_SUCCESS);
-    updatingCostArrayDevice = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(int) * globalWorkSize, NULL, &errNum);
-    checkError(errNum, CL_SUCCESS);
-    resultArrayDevice = clCreateBuffer(context, CL_MEM_READ_WRITE,
-                                       sizeof(int) * results_size, NULL, &errNum);
-    checkError(errNum, CL_SUCCESS);
-
-    // Now queue up the data to be copied to the device
-    errNum = clEnqueueCopyBuffer(commandQueue, hostVertexArrayBuffer, vertexArrayDevice, 0, 0,
-                                 sizeof(int) * graph->vertexCount, 0, NULL, NULL);
-    checkError(errNum, CL_SUCCESS);
-    errNum = clEnqueueCopyBuffer(commandQueue, hostEdgeArrayBuffer, edgeArrayDevice, 0, 0,
-                                 sizeof(int) * graph->edgeCount, 0, NULL, NULL);
-    checkError(errNum, CL_SUCCESS);
-    errNum = clEnqueueCopyBuffer(commandQueue, hostWeightArrayBuffer, weightArrayDevice, 0, 0,
-                                 sizeof(int) * graph->edgeCount, 0, NULL, NULL);
-    checkError(errNum, CL_SUCCESS);
-    errNum = clEnqueueCopyBuffer(commandQueue, hostSourceArrayBuffer, sourceArrayDevice, 0, 0,
-                                 sizeof(int) * numResults, 0, NULL, NULL);
-    checkError(errNum, CL_SUCCESS);
-
-    clReleaseMemObject(hostVertexArrayBuffer);
-    clReleaseMemObject(hostEdgeArrayBuffer);
-    clReleaseMemObject(hostWeightArrayBuffer);
-    clReleaseMemObject(hostSourceArrayBuffer);
-
-    // Create the Kernels
-    cl_kernel ssspKernel1;
-    ssspKernel1 = clCreateKernel(program, "SSSP_KERNEL", &errNum);
-    checkError(errNum, CL_SUCCESS);
-    errNum |= clSetKernelArg(ssspKernel1, 0, sizeof(cl_int), &graph->vertexCount);
-    errNum |= clSetKernelArg(ssspKernel1, 1, sizeof(cl_int), &graph->edgeCount);
-    errNum |= clSetKernelArg(ssspKernel1, 2, sizeof(cl_mem), &vertexArrayDevice);
-    errNum |= clSetKernelArg(ssspKernel1, 3, sizeof(cl_mem), &edgeArrayDevice);
-    errNum |= clSetKernelArg(ssspKernel1, 4, sizeof(cl_mem), &weightArrayDevice);
-    errNum |= clSetKernelArg(ssspKernel1, 5, sizeof(cl_mem), &maskArrayDevice);
-    errNum |= clSetKernelArg(ssspKernel1, 6, sizeof(cl_mem), &costArrayDevice);
-    errNum |= clSetKernelArg(ssspKernel1, 7, sizeof(cl_mem), &updatingCostArrayDevice);
-    errNum |= clSetKernelArg(ssspKernel1, 8, sizeof(cl_mem), &sourceArrayDevice);
-    errNum |= clSetKernelArg(ssspKernel1, 9, sizeof(cl_mem), &resultArrayDevice);
-
-    checkError(errNum, CL_SUCCESS);
-
-    errNum = clEnqueueNDRangeKernel(commandQueue, ssspKernel1, 1, 0,
-                                    &globalWorkSize, &localWorkSize,
-                                    0, NULL, NULL);
-    checkError(errNum, CL_SUCCESS);
-
-    // Copy the result back
-    cl_event readDone;
-    size_t offset = 0;
-    errNum = clEnqueueReadBuffer(commandQueue, resultArrayDevice, CL_FALSE, 0,
-                                 sizeof(int) * graph->vertexCount,
-                                 &outResultCosts[offset], 0, NULL, &readDone);
-    checkError(errNum, CL_SUCCESS);
-    clWaitForEvents(1, &readDone);
-
-    clReleaseMemObject(vertexArrayDevice);
-    clReleaseMemObject(edgeArrayDevice);
-    clReleaseMemObject(weightArrayDevice);
-    clReleaseMemObject(resultArrayDevice);
-
-    clReleaseKernel(ssspKernel1);
-
-    clReleaseCommandQueue(commandQueue);
-    clReleaseProgram(program);
-    cout << "Computed '" << numResults << "' results" << endl;
-
-}
-
 
 
 
@@ -1419,7 +903,9 @@ void printArr(int dist[], int n)
 
 // The main function that calulates distances of shortest paths from src to all
 // vertices. It is a O(ELogV) function
-void dijkstra(struct Graph* graph, int src, int i_result, int* results)
+void dijkstra(struct Graph* graph, int src, int* results,
+              const std::vector<std::pair<int, int> >& query_to_node,
+              boost::unordered_map<int, std::vector<int> >& node_to_query)
 {
     int V = graph->V;// Get the number of vertices in graph
     int dist[V];      // dist values used to pick minimum weight edge in cut
@@ -1488,6 +974,26 @@ void dijkstra(struct Graph* graph, int src, int i_result, int* results)
         //printf("%d \t\t %d\n", i, dist[i]);
     //    results[offset+i] = dist[i];
     //}
+    size_t i, j, offset, n_query;
+    int node_idx, cost;
+    
+    std::vector<int>& query_idx = node_to_query[src];
+    n_query = query_to_node.size();
+    
+    for (i=0; i<query_idx.size(); ++i) {
+        offset = (size_t)query_idx[i] * n_query;
+        for (j=0; j<n_query; ++j) {
+            if (query_idx[i] == j) {
+                results[offset+j] = 0;
+            } else {
+                node_idx = query_to_node[j].first;
+                cost = dist[node_idx];
+                cost += query_to_node[j].second;
+                cost += query_to_node[query_idx[i]].second;
+                results[offset+j] = cost;
+            }
+        }
+    }
 }
 
 void freeGraph(Graph* graph)

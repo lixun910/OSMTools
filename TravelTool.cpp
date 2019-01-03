@@ -71,6 +71,9 @@ TravelTool::TravelTool(std::vector<OGRFeature*> in_roads,
     roads = in_roads;
     query_points = in_query_points;
 
+    num_gpus = DetectGPU();
+    num_cores = boost::thread::hardware_concurrency();
+    
     PreprocessRoads();
 }
 
@@ -152,7 +155,7 @@ void TravelTool::PreprocessRoads()
     ANN_DIST_TYPE = 2;
 
     int anchor_cnt = 0, query_size = query_points.size();
-    std::vector<std::pair<int, int> > query_to_node(query_size);
+    query_to_node.resize(query_size);
     for (i=0; i<query_size; ++i) {
         feature = query_points[i];
         geom = feature->GetGeometryRef();
@@ -167,11 +170,11 @@ void TravelTool::PreprocessRoads()
         
         int q_id = nnIdx[0];
         anchor_points[q_id] = true;
-        if (source_dict.find(q_id) == source_dict.end()) {
+        if (node_to_query.find(q_id) == node_to_query.end()) {
             query_nodes.push_back(q_id);
             anchor_cnt++;
         }
-        source_dict[q_id].push_back(i);
+        node_to_query[q_id].push_back(i);
         double c = ComputeArcDist(*m_pt, nodes[q_id]) / (20.0 * 1000);
         c = c * 60 * 60; // to minute
         query_to_node[i] = std::make_pair(q_id, (int)c);
@@ -369,60 +372,128 @@ void TravelTool::PreprocessRoads()
             valid_index ++;
         }
     }
-    boost::unordered_map<int, std::vector<int> > new_source_dict;
-    for (i=0; i<query_nodes.size(); ++i) {
-        int new_idx = rev_index_map[ query_nodes[i] ];
-        query_nodes[i] = new_idx;
-        new_source_dict[new_idx] = source_dict[ query_nodes[i] ];
-    }
-    source_dict.clear();
-    source_dict = new_source_dict;
-    for (i=0; i<query_to_node.size(); ++i) {
-        query_to_node[i].first = rev_index_map[ query_to_node[i].first ];
-    }
-
-    // compute distance
     num_nodes = valid_index;
     num_edges = 0;
     boost::unordered_map<int, std::vector<std::pair<int, double> > >::iterator it;
     for (it = edges_dict.begin(); it!= edges_dict.end(); ++it) {
         num_edges += it->second.size();
     }
-
-    size_t offset = 0, e_idx = 0, nbr_idx;
-    size_t results_mem = sizeof(int) * (size_t)query_size * (size_t)num_nodes;
+    boost::unordered_map<int, std::vector<int> > new_source_dict;
+    for (i=0; i<query_nodes.size(); ++i) {
+        int new_idx = rev_index_map[ query_nodes[i] ];
+        new_source_dict[new_idx] = node_to_query[ query_nodes[i] ];
+        query_nodes[i] = new_idx;
+    }
+    node_to_query.clear();
+    node_to_query = new_source_dict;
+    new_source_dict.clear();
+    for (i=0; i<query_to_node.size(); ++i) {
+        query_to_node[i].first = rev_index_map[ query_to_node[i].first ];
+    }
+    boost::unordered_map<int,
+        std::vector<std::pair<int, double> > > new_edges_dict;
+    int nbr_idx;
+    for(i = 0; i < num_nodes; i++) {
+        // for each valid node
+        node_idx = index_map[i];
+        std::vector<std::pair<int, double> >& nbrs = edges_dict[node_idx];
+        for (j=0; j<nbrs.size(); ++j) {
+            nbr_idx = rev_index_map[ nbrs[j].first ];
+            cost = nbrs[j].second;
+            new_edges_dict[i].push_back(std::make_pair(nbr_idx, cost));
+        }
+    }
+    edges_dict.clear();
+    edges_dict = new_edges_dict;
+    new_edges_dict.clear();
+    
+    // compute distance
+   
+    // query_size: the size of input query points
+    // full matrix is needes since we have one-way only roads
+    size_t results_mem = sizeof(int) * (size_t)query_size * (size_t)query_size;
     int *results = (int*) malloc(results_mem);
-    int *sourceVertArray = (int*) malloc(sizeof(int) * query_size);
-    for (size_t i=0; i<query_size; i++) sourceVertArray[i] = query_nodes[i];
+    
+    ComputeDistMatrix(results);
+    
+    std::vector<wxString> query_ids;
+    SaveQueryResults("/Users/xunli/Desktop/out.bin", query_size, results,
+                     query_ids);
+    
+    free(results);
+    pt::time_duration timeGPUCPU = pt::microsec_clock::local_time() - startTimeGPUCPU;
+    printf("\nrunDijkstra - All Time: %f s\n", (float)timeGPUCPU.total_milliseconds() / 1000.0f);
 
+}
+
+void TravelTool::ComputeDistMatrix(int* results)
+{
+    // actually query_size using anchor nodes
+    int query_size = query_nodes.size();
+    
+    if (num_gpus == 0) {
+        ComputeDistMatrixCPU(results, query_size, num_cores);
+        
+    } else {
+        ratio_cpu_to_gpu = 0.55;
+        int cpu_results = query_size * (ratio_cpu_to_gpu);
+        int gpu_results = query_size - cpu_results;
+        //int num_works = num_gpus + 1 /*cpu*/;
+        
+        boost::thread* bthread[2];
+        
+        bthread[0] = new boost::thread(
+                                boost::bind(&TravelTool::ComputeDistMatrixCPU,
+                                            this,
+                                            results,
+                                            cpu_results,
+                                            num_cores));
+        bthread[1] = new boost::thread(
+                                boost::bind(&TravelTool::ComputeDistMatrixGPU,
+                                            this,
+                                            results,
+                                            gpu_results,
+                                            cpu_results));
+        
+        for (int i=0; i<2; ++i) {
+            bthread[i]->join();
+        }
+        for (int i=0; i<2; ++i) {
+            delete bthread[i];
+        }
+    }
+}
+
+void TravelTool::ComputeDistMatrixCPU(int* results, int query_size, int nCPUs)
+{
+    pt::ptime startTimeGPUCPU = pt::microsec_clock::local_time();
+    
+    size_t i, j, cost, node_idx, nbr_idx;
+    
     // adjacent dijkstra on CPU
     Graph* cpu_graph = createGraph(num_nodes);
     for(i = 0; i < num_nodes; i++) {
         // for each valid node
-        node_idx = index_map[i];
-        std::vector<std::pair<int, double> > nbrs = edges_dict[node_idx];
-
+        std::vector<std::pair<int, double> >& nbrs = edges_dict[i];
         for (j=0; j<nbrs.size(); ++j) {
-            nbr_idx = rev_index_map[ nbrs[j].first ];
+            nbr_idx = nbrs[j].first;
             cost = nbrs[j].second;
             addEdgeToGraph(cpu_graph, i, nbr_idx, cost);
         }
     }
-
-    query_size = query_nodes.size();
-    unsigned int nCPUs = boost::thread::hardware_concurrency();
+    
     int work_chunk = query_size / nCPUs;
-
+    
     if (work_chunk == 0) work_chunk = 1;
-
+    
     int obs_start = 0;
     int obs_end = obs_start + work_chunk;
     int quotient = query_size / nCPUs;
     int remainder = query_size % nCPUs;
     int tot_threads = (quotient > 0) ? nCPUs : remainder;
-
+    
     boost::thread* bthread[tot_threads];
-
+    
     for (unsigned int i=0; i<tot_threads; i++) {
         int a=0;
         int b=0;
@@ -433,38 +504,42 @@ void TravelTool::PreprocessRoads()
             a = remainder*(quotient+1) + (i-remainder)*quotient;
             b = a+quotient-1;
         }
-
+        
         bthread[i] = new boost::thread(boost::bind(&TravelTool::dijkstra_thread,
                                                    this,
                                                    (Graph*) cpu_graph,
-                                                   (int*)sourceVertArray,
-                                                   (int*)results,
-                                                   //query_to_node,
-                                                   //source_dict,
+                                                   boost::ref(query_nodes),
+                                                   (int*) results,
+                                                   boost::ref(query_to_node),
+                                                   boost::ref(node_to_query),
                                                    a, b));
     }
     for (unsigned int i = 0; i < tot_threads; i++) {
         bthread[i]->join();
     }
-
+    
     for (unsigned int i = 0; i < tot_threads; i++) {
         delete bthread[i];
     }
-
-    freeGraph(cpu_graph);
     
-    free(sourceVertArray);
-    free(results);
+    freeGraph(cpu_graph);
     pt::time_duration timeGPUCPU = pt::microsec_clock::local_time() - startTimeGPUCPU;
     printf("\nrunDijkstra - CPU Time: %f s\n", (float)timeGPUCPU.total_milliseconds() / 1000.0f);
-
 }
 
-void TravelTool::dijkstra_thread(Graph* graph, int* query_indexes,
-                                 int* results, int a, int b)
+
+void TravelTool::dijkstra_thread(Graph* graph,
+                                 const std::vector<int>& query_indexes,
+                                 int* results,
+                                 const std::vector<std::pair<int, int> >& query_to_node,
+                                 boost::unordered_map<int, std::vector<int> >& node_to_query,
+                                 int a, int b)
 {
+    //struct Graph* graph, int src, int* results,
+    //const std::vector<std::pair<int, int> >& query_to_node,
+    //boost::unordered_map<int, std::vector<int> >& node_to_query
     for (size_t i=a; i<=b; ++i) {
-        dijkstra(graph, query_indexes[i], i, results); // std::vector<int>,
+        dijkstra(graph, query_indexes[i], results, query_to_node, node_to_query);
     }
 }
 
@@ -480,47 +555,31 @@ int TravelTool::GetValidEdgeId(int idx) {
 }
 
 bool TravelTool::SaveQueryResults(const char* file_path,
-                                  size_t num_nodes,
+                                  int n_query,
                                   int* results,
-                    const std::vector<std::pair<int, int> >& query_to_node)
+                                  const std::vector<wxString>& query_ids)
 {
-    /*
     if (file_path == 0) return false;
     
     FILE * fp;
     fp = fopen(file_path, "wb");
     if (fp == 0) return false;
     
-    size_t n_query_pts = query_to_node.size();
+    fwrite(&n_query,sizeof(int), 1, fp);
     
-    fwrite(&n_query_pts,sizeof(size_t), 1, fp);
-    
-    size_t node_i, node_j;
-    int c1, c2, c;
-    
-    int* row = (int*)malloc(sizeof(int)*n_query_pts);
-    for (size_t i=0; i<n_query_pts; ++i) {
-        for (size_t j=0; j<n_query_pts; ++j) {
-            // cost between i <--> j
-            if (i == j) {
-                // print 0
-                row[j] = 0;
-            } else {
-                node_i = source_dict[ query_to_node[i].first ];
-                c1 = query_to_node[i].second;
-                node_j = source_dict[ query_to_node[j].first ];
-                c2 = query_to_node[j].second;
-                c = results[node_i * num_nodes + node_j];
-                c = c1 + c + c2;
-                row[j] = c;
-            }
-        }
-        fwrite(row, sizeof(int), n_query_pts, fp);
+    fwrite(query_ids.empty() ? "0" : "1", sizeof(char), 1, fp);
+    for (size_t i=0; i<query_ids.size(); ++i) {
+        int str_len = query_ids[i].length();
+        fwrite(&str_len, sizeof(int), 1, fp);
+        const char* id = query_ids[i].mb_str(wxConvUTF8);
+        fwrite(id, sizeof(char), str_len, fp);
     }
-    free(row);
     
+    size_t results_size = (size_t)n_query * (size_t)n_query;
+    fwrite(results, sizeof(int), results_size, fp);
+
     fclose(fp);
-     */
+    
     return true;
 }
 
@@ -805,88 +864,100 @@ void TravelTool::SaveQueryNodes(const char* shp_file_name)
     GDALClose( poDS );
 }
 
-void TravelTool::ComputeDistMatrixGPU()
+void TravelTool::ComputeDistMatrixGPU(int* results, int query_size,
+                                      int result_start)
 {
-    /*
-     vertex_array = (int*) malloc(num_nodes * sizeof(int));
-     edge_array = (int*)malloc(num_edges * sizeof(int));
-     weight_array = (int*)malloc(num_edges * sizeof(int));
+    pt::ptime startTimeGPUCPU = pt::microsec_clock::local_time();
+    
+    int* vertex_array = (int*) malloc(num_nodes * sizeof(int));
+    int* edge_array = (int*)malloc(num_edges * sizeof(int));
+    int* weight_array = (int*)malloc(num_edges * sizeof(int));
+    
+    GraphData graph;
+    graph.vertexCount = num_nodes;
+    graph.vertexArray = vertex_array;
+    graph.edgeCount = num_edges;
+    graph.edgeArray = edge_array;
+    graph.weightArray = weight_array;
+    
+    size_t i, j, cost, nbr_idx, e_idx = 0, offset = 0;
+    for(i = 0; i < graph.vertexCount; i++) {
+        // for each valid node
+        graph.vertexArray[i] = offset;
+        std::vector<std::pair<int, double> >& nbrs = edges_dict[i];
+        for (j=0; j<nbrs.size(); ++j) {
+            nbr_idx = nbrs[j].first;
+            cost = nbrs[j].second;
+            graph.edgeArray[e_idx] = nbr_idx;
+            graph.weightArray[e_idx++] = cost;
+        }
+        offset += nbrs.size();
+    }
+    
+    // get directory of kernel *.cl file
+    char cl_dir[1024];
+    wxString current_dir = GetExeDir();
+    strncpy(cl_dir, (const char*)current_dir.mb_str(wxConvUTF8), 1023);
+    
+    int *query_indices = new int[query_size];
+    for (i=result_start, j=0; i<query_nodes.size(); ++i) {
+        query_indices[j++] = query_nodes[i];
+    }
+    cl_int errNum;
+    // create the OpenCL context on available GPU devices
+    cl_context gpuContext = clCreateContextFromType(0, CL_DEVICE_TYPE_GPU,
+                                                    NULL, NULL, &errNum);
+    if (errNum != CL_SUCCESS) {
+        printf("No GPU devices found.\n");
+        return;
+    }
+  
+    runDijkstraMultiGPU(cl_dir, gpuContext, &graph, query_indices,
+                        results, query_size, query_to_node, node_to_query);
+    
+    delete[] query_indices;
+    free(vertex_array);
+    free(edge_array);
+    free(weight_array);
+    
+    pt::time_duration timeGPUCPU = pt::microsec_clock::local_time() - startTimeGPUCPU;
+    printf("\nrunDijkstra - GPU Time: %f s\n", (float)timeGPUCPU.total_milliseconds() / 1000.0f);
+}
 
-     graph.vertexCount = num_nodes;
-     graph.vertexArray = vertex_array;
-     graph.edgeCount = num_edges;
-     graph.edgeArray = edge_array;
-     graph.weightArray = weight_array;
-
-
-     for(i = 0; i < graph.vertexCount; i++) {
-     // for each valid node
-     graph.vertexArray[i] = offset;
-     node_idx = index_map[i];
-     std::vector<std::pair<int, double> > nbrs = edges_dict[node_idx];
-
-     for (j=0; j<nbrs.size(); ++j) {
-     nbr_idx = rev_index_map[ nbrs[j].first ];
-     cost = nbrs[j].second;
-     graph.edgeArray[e_idx] = nbr_idx;
-     graph.weightArray[e_idx++] = cost;
-     }
-
-     offset += nbrs.size();
-     }
-
-     cl_int errNum;
-     cl_platform_id platform;
-     cl_context gpuContext;
-     cl_context cpuContext;
-     cl_uint numPlatforms;
-
-     // First, select an OpenCL platform to run on.  For this example, we
-     // simply choose the first available platform.  Normally, you would
-     // query for all available platforms and select the most appropriate one.
-
-     errNum = clGetPlatformIDs(1, &platform, &numPlatforms);
-     printf("Number of OpenCL Platforms: %d\n", numPlatforms);
-     if (errNum != CL_SUCCESS || numPlatforms <= 0) {
-     printf("Failed to find any OpenCL platforms.\n");
-     return;
-     }
-
-     // create the OpenCL context on available GPU devices
-     gpuContext = clCreateContextFromType(0, CL_DEVICE_TYPE_GPU, NULL, NULL, &errNum);
-     if (errNum != CL_SUCCESS) {
-     printf("No GPU devices found.\n");
-     }
-
-     // Create an OpenCL context on available CPU devices
-     cpuContext = clCreateContextFromType(0, CL_DEVICE_TYPE_CPU, NULL, NULL, &errNum);
-     if (errNum != CL_SUCCESS) {
-     printf("No CPU devices found.\n");
-     }
-
-     char cl_dir[1024];
-     wxString current_dir = GetExeDir();
-     strncpy(cl_dir, (const char*)current_dir.mb_str(wxConvUTF8), 1023);
-
-     cl_device_id deviceId = getDev(gpuContext, 0);
-
-     //runSSSP( current_dir, gpuContext,  deviceId, &graph,sourceVertArray,  results, query_size);
-     runDijkstraMultiGPUandCPU(cl_dir, gpuContext, cpuContext, &graph, sourceVertArray, results, query_size);
-     //runDijkstraMT(&graph, sourceVertArray, results, query_size);
-     //runDijkstraRef(&graph, sourceVertArray, results, 0, query_size-1);
-
-     pt::time_duration timeGPUCPU = pt::microsec_clock::local_time() - startTimeGPUCPU;
-     printf("\nrunDijkstra - Multi GPU and CPU Time: %f s\n", (float)timeGPUCPU.total_milliseconds() / 1000.0f);
-
-     pt::ptime saveTime = pt::microsec_clock::local_time();
-
-     //SaveQueryResults("/Users/xunli/Desktop/out.bin", num_nodes, results,
-     //                 query_to_node);
-
-     pt::time_duration timeSave = pt::microsec_clock::local_time() - saveTime;
-     printf("\nrunDijkstra - Save Time: %f s\n", (float)timeSave.total_milliseconds() / 1000.0f);
-
-     clReleaseContext(gpuContext);
-     clReleaseContext(cpuContext);
-     */
+int TravelTool::DetectGPU()
+{
+    cl_int errNum;
+    cl_platform_id platform;
+    cl_context gpuContext;
+    cl_uint numPlatforms;
+    
+    // First, select an OpenCL platform to run on.  For this example, we
+    // simply choose the first available platform.  Normally, you would
+    // query for all available platforms and select the most appropriate one.
+    
+    errNum = clGetPlatformIDs(1, &platform, &numPlatforms);
+    printf("Number of OpenCL Platforms: %d\n", numPlatforms);
+    if (errNum != CL_SUCCESS || numPlatforms <= 0) {
+        printf("Failed to find any OpenCL platforms.\n");
+        return 0;
+    }
+    
+    // create the OpenCL context on available GPU devices
+    gpuContext = clCreateContextFromType(0, CL_DEVICE_TYPE_GPU, NULL, NULL, &errNum);
+    if (errNum != CL_SUCCESS) {
+        printf("No GPU devices found.\n");
+        return 0;
+    }
+    
+    size_t deviceBytes;
+    cl_uint deviceCount;
+    
+    errNum = clGetContextInfo(gpuContext, CL_CONTEXT_DEVICES, 0, NULL, &deviceBytes);
+    if (errNum != CL_SUCCESS) {
+        printf("No GPU devices found.\n");
+        return 0;
+    }
+    deviceCount = (cl_uint)deviceBytes/sizeof(cl_device_id);
+    
+    return deviceCount;
 }
