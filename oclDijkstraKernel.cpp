@@ -969,23 +969,30 @@ void dijkstra(struct CPUGraph* graph, int src, int* results,
         // return path
         
     } else {
-        size_t i, j, offset, n_query;
-        int node_idx, cost;
+        if (node_to_query.empty() && query_to_node.empty()) {
+            // return dist as results
+            memcpy(results, dist, sizeof(int) * V);
 
-        std::vector<int>& query_idx = node_to_query[src];
-        n_query = query_to_node.size();
+        }  else {
+            // map query points to node points
+            size_t i, j, offset, n_query;
+            int node_idx, cost;
 
-        for (i=0; i<query_idx.size(); ++i) {
-            offset = (size_t)query_idx[i] * n_query;
-            for (j=0; j<n_query; ++j) {
-                if (query_idx[i] == j) {
-                    results[offset+j] = 0;
-                } else {
-                    node_idx = query_to_node[j].first;
-                    cost = dist[node_idx];
-                    cost += query_to_node[j].second;
-                    cost += query_to_node[query_idx[i]].second;
-                    results[offset+j] = cost;
+            std::vector<int>& query_idx = node_to_query[src];
+            n_query = query_to_node.size();
+
+            for (i=0; i<query_idx.size(); ++i) {
+                offset = (size_t)query_idx[i] * n_query;
+                for (j=0; j<n_query; ++j) {
+                    if (query_idx[i] == j) {
+                        results[offset+j] = 0;
+                    } else {
+                        node_idx = query_to_node[j].first;
+                        cost = dist[node_idx];
+                        cost += query_to_node[j].second;
+                        cost += query_to_node[query_idx[i]].second;
+                        results[offset+j] = cost;
+                    }
                 }
             }
         }

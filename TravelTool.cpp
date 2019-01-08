@@ -21,6 +21,10 @@
 #define EARTH_RADIUS 6372795  // meters
 #endif
 
+#ifndef KPH_TO_MPS
+#define KPM_TO_MPS  0.2778 // KMeter per hour to Meters per second: 1000/60/60
+#endif
+
 using namespace OSMTools;
 namespace pt = boost::posix_time;
 
@@ -30,6 +34,7 @@ TravelTool::TravelTool()
 }
 
 TravelTool::TravelTool(std::vector<OGRFeature*> in_roads)
+: cpu_graph(0)
 {
     speed_limit_dict["road"]=32;
     speed_limit_dict["motorway"] = 96;
@@ -79,6 +84,8 @@ TravelTool::~TravelTool()
     for (int i=0; i<kd_tree->nPoints(); ++i) delete[] xy[i];
     delete[] xy;
     delete kd_tree;
+
+    if (cpu_graph) delete cpu_graph;
 }
 
 wxString TravelTool::GetExeDir()
@@ -132,6 +139,7 @@ void TravelTool::PreprocessRoads()
         }
         edges.push_back(e);
     }
+    oneway_dict.resize(edges.size(), false);
 
     node_count = node_appearance.size();
     nodes_flag.resize(node_count, false);
@@ -149,6 +157,7 @@ void TravelTool::PreprocessRoads()
 
 void TravelTool::BuildCPUGraph()
 {
+    num_nodes = nodes_dict.size();
     // adjacent dijkstra on CPU
     cpu_graph = createGraph(num_nodes);
 
@@ -192,24 +201,179 @@ void TravelTool::BuildCPUGraph()
             from = nodes_dict[rd_from];
             to = nodes_dict[rd_to];
             length = ComputeArcDist(start, end);
-            cost = (length / (speed_limit * 1000)) * 60 * 60;
-            if (cost <= 0) cost = 1; // make sure
+            cost = length / (speed_limit * KPM_TO_MPS);
+            //if (cost <= 0) cost = 1; // make sure
 
+            edge_to_way[std::make_pair(from, to)] = i;
             addEdgeToGraph(cpu_graph, from, to, cost);
             if (oneway_dict[i]==false) {
                 addEdgeToGraph(cpu_graph, to, from, cost);
+                //edge_to_way[std::make_pair(to, from)] = i;
             }
         }
     }
 }
 
-void TravelTool::Query(OGRPoint& from_pt, OGRPoint& to_pt)
+int TravelTool::Query(OGRPoint& from_pt, OGRPoint& to_pt,
+                      std::vector<OGRLineString>& ogr_line,
+                      std::vector<int>& way_ids)
 {
-    int path[cpu_graph->V];
-    int query_node_index;
+    if (cpu_graph == 0) return -1;
 
-    dijkstra(cpu_graph, query_node_index, 0/*results*/, query_to_node,
+    // get points on edges close to from_pt and to_pt
+    double eps = 0.00000001; // error bound
+#ifdef __GEODA__
+    ANN_DIST_TYPE = 2;
+#endif
+
+    ANNidxArray nnIdx = new ANNidx[2];
+    ANNdistArray dists = new ANNdist[2];
+    double* q_pt = new double[2];
+
+    q_pt[0] = from_pt.getX();
+    q_pt[1] = from_pt.getY();
+    kd_tree->annkSearch(q_pt, 2, nnIdx, dists, eps);
+    int from_node_idx = nnIdx[0];
+    double c1 = ComputeArcDist(from_pt, nodes[from_node_idx]) / (20.0 * 1000);
+    c1 = c1 * 60 * 60; // to seconds
+
+    q_pt[0] = to_pt.getX();
+    q_pt[1] = to_pt.getY();
+    kd_tree->annkSearch(q_pt, 2, nnIdx, dists, eps);
+    int to_node_idx = nnIdx[0];
+    double c2 = ComputeArcDist(to_pt, nodes[to_node_idx]) / (20.0 * 1000);
+    c2 = c2 * 60 * 60; // to seconds
+
+    delete[] q_pt;
+    delete[] nnIdx;
+    delete[] dists;
+
+    // query path using dijkstra
+    int path[cpu_graph->V];
+    int results[cpu_graph->V];
+    dijkstra(cpu_graph, from_node_idx, results, query_to_node,
              node_to_query, path);
+
+    std::vector<int> node_path;
+    int i = to_node_idx;
+    while (path[i] != -1) {
+        node_path.push_back(i);
+        i = path[i];
+    }
+    if (node_path.empty()) return -1;
+    
+    for (i=0; i<node_path.size()-1; ++i) {
+        int from = node_path[i];
+        int to = node_path[i+1];
+        OGRLineString line;
+        line.addPoint(&nodes[from]);
+        line.addPoint(&nodes[to]);
+        ogr_line.push_back(line);
+        std::pair<int, int> e(from, to);
+        if (edge_to_way.find(e) != edge_to_way.end()) {
+            way_ids.push_back(edge_to_way[e]);
+        } else {
+            std::pair<int, int> e_rev(to, from);
+            if (edge_to_way.find(e_rev) != edge_to_way.end()) {
+                way_ids.push_back(edge_to_way[e_rev]);
+            }
+        }
+    }
+
+    int c = (int)(c1 + c2 + results[to_node_idx]);
+    return c;
+}
+
+
+void TravelTool::QueryHexMap(OGRPoint& start_pt, OGREnvelope& extent,
+                             double hexagon_radius,
+                             std::vector<std::vector<OGRPolygon> >& hexagons,
+                             std::vector<std::vector<int> >& costs,
+                             bool create_hexagons)
+{
+    // query using dijkstra
+    RD_POINT pt(start_pt.getX(), start_pt.getY());
+    int from_node_idx = nodes_dict[pt];
+    int results[cpu_graph->V];
+    dijkstra(cpu_graph, from_node_idx, results, query_to_node,
+             node_to_query, 0);
+
+    double eps = 0.00000001; // error bound
+#ifdef __GEODA__
+    ANN_DIST_TYPE = 2;
+#endif
+
+    if (hexagons.empty()) create_hexagons = true;
+    if (create_hexagons) hexagons.clear();
+
+    hexagon_radius = EarthMeterToDegree(hexagon_radius);
+
+    double hex_angle = 0.523598776; // 30 degrees in radians
+    double side_length = hexagon_radius / cos(hex_angle);
+    double hex_height = sin(hex_angle) * side_length;
+    double hex_rect_height = side_length + 2 * hex_height;
+    double hex_rect_width = 2 * hexagon_radius;
+
+    double map_width, map_height; // degree unit
+    map_width = extent.MaxX - extent.MinX;
+    map_height = extent.MaxY - extent.MinY;
+
+    int cell_size_h, cell_size_v;
+    cell_size_h = (int)((ceil)(map_width / hex_rect_width));
+    cell_size_v = (int)((ceil)(map_height / (hex_height + side_length)));
+
+    // in degree
+    double offset_h = (map_width - cell_size_h * hex_rect_width) / 2.0;
+    double offset_v = (map_height - cell_size_v * ((hex_height + side_length))) / 2.0;
+
+    double start_x = extent.MinX + offset_h;
+    double start_y = extent.MaxY - offset_v;
+
+    double x, y, cx, cy;
+    for (size_t i=0; i<cell_size_v; ++i) {
+        y = start_y - i * (side_length + hex_height);
+        std::vector<OGRPolygon> hex_row;
+        std::vector<int> cost_row;
+        for (size_t j=0; j<cell_size_h; ++j) {
+            // (x,y) left-top corner of hex
+            x = start_x + j * hex_rect_width + ((i%2)*hexagon_radius);
+            if (create_hexagons) {
+                OGRPolygon poly;
+                OGRLinearRing ring;
+                OGRPoint p1(x+hexagon_radius, y);
+                OGRPoint p2(x+hex_rect_width, y - hex_height);
+                OGRPoint p3(x+hex_rect_width, y - hex_height - side_length);
+                OGRPoint p4(x + hexagon_radius, y - hex_rect_height);
+                OGRPoint p5(x, y - side_length - hex_height);
+                OGRPoint p6(x, y - hex_height);
+                ring.addPoint(&p1);
+                ring.addPoint(&p2);
+                ring.addPoint(&p3);
+                ring.addPoint(&p4);
+                ring.addPoint(&p5);
+                ring.addPoint(&p6);
+                poly.addRing(&ring);
+
+                hex_row.push_back(poly);
+            }
+            cx = x + hexagon_radius;
+            cy = y + hex_height + side_length / 2;
+
+            ANNidxArray nnIdx = new ANNidx[2];
+            ANNdistArray dists = new ANNdist[2];
+            double q_pt[2];
+            q_pt[0] = cx;
+            q_pt[1] = cy;
+            kd_tree->annkSearch(q_pt, 1, nnIdx, dists, eps);
+            int node_idx = nnIdx[0];
+            delete[] nnIdx;
+            delete[] dists;
+
+            cost_row.push_back(results[node_idx]);
+        }
+        hexagons.push_back(hex_row);
+        costs.push_back(cost_row);
+    }
 }
 
 void TravelTool::GetDistanceMatrix(std::vector<OGRFeature *> _query_points)
@@ -247,7 +411,7 @@ void TravelTool::GetDistanceMatrix(std::vector<OGRFeature *> _query_points)
         }
         node_to_query[q_id].push_back(i);
         double c = ComputeArcDist(*m_pt, nodes[q_id]) / (20.0 * 1000);
-        c = c * 60 * 60; // to minute
+        c = c * 60 * 60; // to seconds
         query_to_node[i] = std::make_pair(q_id, (int)c);
         
         delete[] q_pt;
@@ -261,7 +425,6 @@ void TravelTool::GetDistanceMatrix(std::vector<OGRFeature *> _query_points)
     int from, to, cost;
     std::string highway, oneway, maxspeed;
     double speed_limit = 20.0, length;
-    oneway_dict.resize(edges.size(), false);
     for (i=0; i<edges.size(); ++i) {
         n_pts = edges[i].size();
         OGRPoint start = edges[i][0];
@@ -292,9 +455,9 @@ void TravelTool::GetDistanceMatrix(std::vector<OGRFeature *> _query_points)
             RD_POINT rd_to = std::make_pair(end.getX(), end.getY());
             from = nodes_dict[rd_from];
             to = nodes_dict[rd_to];
-            length = ComputeArcDist(start, end);
-            cost = (length / (speed_limit * 1000)) * 60 * 60;
-            if (cost <= 0) cost = 1; // make sure
+            length = ComputeArcDist(start, end); // meter
+            cost = length / (speed_limit * KPM_TO_MPS);
+            //if (cost <= 0) cost = 1; // make sure
             pair_cost[std::make_pair(from, to)] = cost;
             if (oneway_dict[i]==false) {
                 pair_cost[std::make_pair(to, from)] = cost;
@@ -725,6 +888,11 @@ bool TravelTool::MergeTwoWaysByEnd(int w1, int w2)
     int node_idx = nodes_dict[rd_pt];
     node_appearance[node_idx] -= 1;
     return true;
+}
+
+double TravelTool::EarthMeterToDegree(double d)
+{
+    return 360 * d / (2 * EARTH_RADIUS * PI);
 }
 
 double TravelTool::ComputeArcDist(OGRPoint& from, OGRPoint& to)

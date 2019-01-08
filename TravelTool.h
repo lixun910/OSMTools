@@ -35,8 +35,15 @@ namespace OSMTools {
 
         void BuildCPUGraph();
 
-        void Query(OGRPoint& from_pt, OGRPoint& to_pt);
-        
+        int Query(OGRPoint& from_pt, OGRPoint& to_pt,
+                  std::vector<OGRLineString>& ogr_line,
+                  std::vector<int>& way_ids);
+
+        void QueryHexMap(OGRPoint& start_pt, OGREnvelope& extent,
+                         double hexagon_radius,
+                         std::vector<std::vector<OGRPolygon> >& hexagons,
+                         std::vector<std::vector<int> >& costs,
+                         bool create_hexagons = true);
     protected:
 
         void PreprocessRoads();
@@ -58,6 +65,8 @@ namespace OSMTools {
 
         bool MergeTwoWaysByEnd(int w1, int w2);
 
+        double EarthMeterToDegree(double d);
+        
         double ComputeArcDist(OGRPoint& from, OGRPoint& to);
 
         void AddEdge(int way_idx, OGRPoint& from,
@@ -112,7 +121,11 @@ namespace OSMTools {
 
         boost::unordered_map<RD_POINT, int> nodes_dict;
 
+        // [node idx, node idx] : cost (seconds)
         boost::unordered_map<std::pair<int, int>, int> pair_cost;
+
+        // [node idx, node idx] : way id
+        boost::unordered_map<std::pair<int, int>, int> edge_to_way;
 
         // node: count of edge appearance
         boost::unordered_map<int, int> node_appearance;
