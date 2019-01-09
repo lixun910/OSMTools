@@ -23,6 +23,16 @@
 namespace OSMTools {
     typedef std::pair<double, double> RD_POINT;
 
+    class GradientColor {
+    public:
+        GradientColor(const wxString& color_file_path);
+
+        wxColour GetColor(double val);
+
+    protected:
+        wxImage* image;
+    };
+
     class TravelTool {
     public:
         TravelTool();

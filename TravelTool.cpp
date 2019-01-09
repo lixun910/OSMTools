@@ -22,11 +22,34 @@
 #endif
 
 #ifndef KPH_TO_MPS
-#define KPM_TO_MPS  0.2778 // KMeter per hour to Meters per second: 1000/60/60
+#define KPM_TO_MPS  0.2778 // KM per hour to Meters per second: 1000/60/60
 #endif
 
 using namespace OSMTools;
 namespace pt = boost::posix_time;
+
+GradientColor::GradientColor(const wxString& color_file_path)
+{
+    wxInitAllImageHandlers();
+    image = new wxImage();
+    image->LoadFile(color_file_path, wxBITMAP_TYPE_PNG);
+}
+
+wxColour GradientColor::GetColor(double val)
+{
+    if (image == NULL) return *wxWHITE;
+
+    if (image->IsOk()) {
+        int y = val * 255;
+        if (y >= 254)  y = 254;
+        unsigned char r = image->GetRed(1, y);
+        unsigned char g = image->GetGreen(1, y);
+        unsigned char b = image->GetBlue(1, y);
+
+        return wxColour(r, g, b);
+    }
+    return *wxWHITE;
+}
 
 TravelTool::TravelTool()
 {
@@ -305,6 +328,7 @@ void TravelTool::QueryHexMap(OGRPoint& start_pt, OGREnvelope& extent,
 
     if (hexagons.empty()) create_hexagons = true;
     if (create_hexagons) hexagons.clear();
+    costs.clear();
 
     hexagon_radius = EarthMeterToDegree(hexagon_radius);
 
@@ -357,21 +381,28 @@ void TravelTool::QueryHexMap(OGRPoint& start_pt, OGREnvelope& extent,
                 hex_row.push_back(poly);
             }
             cx = x + hexagon_radius;
-            cy = y + hex_height + side_length / 2;
+            cy = y - hex_height - (side_length / 2);
 
             ANNidxArray nnIdx = new ANNidx[2];
             ANNdistArray dists = new ANNdist[2];
             double q_pt[2];
             q_pt[0] = cx;
             q_pt[1] = cy;
-            kd_tree->annkSearch(q_pt, 1, nnIdx, dists, eps);
+            kd_tree->annkSearch(q_pt, 2, nnIdx, dists, eps);
             int node_idx = nnIdx[0];
+            if (sqrt(dists[0]) > hexagon_radius) {
+                cost_row.push_back(INT_MAX); // not valid distance
+            } else if (results[node_idx] == INT_MAX) {
+                node_idx = nnIdx[1]; // try second anchor point
+                cost_row.push_back(results[node_idx]);
+            } else {
+                cost_row.push_back(results[node_idx]);
+            }
+
             delete[] nnIdx;
             delete[] dists;
-
-            cost_row.push_back(results[node_idx]);
         }
-        hexagons.push_back(hex_row);
+        if (create_hexagons) hexagons.push_back(hex_row);
         costs.push_back(cost_row);
     }
 }
