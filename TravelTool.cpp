@@ -151,6 +151,11 @@ void TravelTool::PreprocessRoads()
     kd_tree = new ANNkd_tree(xy, node_count, 2);
 }
 
+void TravelTool::CreateWeightsFile(wxString w_file_path)
+{
+
+}
+
 /**
  * This function is for query travel path only
  *

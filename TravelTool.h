@@ -65,6 +65,8 @@ namespace OSMTools {
 
         void SetGPURatio(double val);
 
+        void CreateWeightsFile(wxString w_file_path);
+        
     protected:
 
         void PreprocessRoads();
