@@ -37,6 +37,8 @@ namespace OSMTools {
         wxRadioButton *rb_bbox;
         wxRadioButton *rb_outline;
         wxRadioButton *rb_bbox_outline;
+        wxCheckBox* cb_buffer;
+        wxTextCtrl *tc_buffer;
     };
 }
 

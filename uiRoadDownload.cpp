@@ -109,8 +109,17 @@ void uiRoadDownload::InitControls()
     hbox2->Add(ok);
     hbox2->Add(cancel);
 
+    wxBoxSizer *hbox3 = new wxBoxSizer(wxHORIZONTAL);
+    cb_buffer = new wxCheckBox(panel, -1, _("Buffer query area:"));
+    tc_buffer = new wxTextCtrl(panel, -1, "20");
+    cb_buffer->SetValue(true);
+    hbox3->Add(cb_buffer);
+    hbox3->Add(tc_buffer, 0, wxRIGHT, 5);
+    hbox3->Add(new wxStaticText(panel, -1, "%"));
+
     wxBoxSizer *vbox = new wxBoxSizer(wxVERTICAL);
     vbox->Add(hbox1, 1, wxEXPAND);
+    vbox->Add(hbox3, 0, wxEXPAND | wxALL, 10);
     vbox->Add(hbox2, 0, wxALIGN_RIGHT | wxRIGHT | wxBOTTOM, 10);
     panel->SetSizer(vbox);
 
@@ -150,8 +159,24 @@ void uiRoadDownload::OnOKClick(wxCommandEvent& event)
     if (CheckInput(tc_bbox_up, lng_max) == false) return;
     if (CheckInput(tc_bbox_bottom, lng_min) == false) return;
 
+    if (cb_buffer->IsChecked()) {
+        long buffer_val;
+        wxString buffer_txt = tc_buffer->GetValue();
+        if (buffer_txt.ToLong(&buffer_val) ) {
+            double buffer_ratio = 1;
+            buffer_ratio = 1 + ((double)buffer_val / 100.0);
+            double w = lat_max - lat_min;
+            double h = lng_max - lng_min;
+            double offset_w = (w * buffer_ratio - w) / 2.0;
+            double offset_h = (h * buffer_ratio - h) / 2.0;
+            lat_min = lat_min - offset_w;
+            lat_max = lat_max + offset_w;
+            lng_min = lng_min - offset_h;
+            lng_max = lng_max + offset_h;
+        }
+    }
     wxString save_ttl = _("Save OSM roads file");
-    wxString filter = "JSON files (*.json)|*.json|ESRI Shapefiles (*.shp)|*.shp";
+    wxString filter = "ESRI Shapefiles (*.shp)|*.shp|JSON files (*.json)|*.json";
 
     wxFileDialog save_dlg(this, save_ttl, "", "", filter,
             wxFD_SAVE|wxFD_OVERWRITE_PROMPT);
