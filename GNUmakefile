@@ -6,7 +6,7 @@ include ../GeoDamake.opt
 CPPFLAGS 	:=	$(CPPFLAGS)
 CXXFLAGS 	:=	$(CXXFLAGS)
 
-CXX_SRCS := $(wildcard *.cpp)
+CXX_SRCS := uiRoadDownload.cpp TravelTool.cpp Downloader.cpp Roads.cpp RoadUtils.cpp
 OBJ := ${CXX_SRCS:.cpp=.o}
 
 default: $(O_OBJ:.o=.$(OBJ_EXT))
