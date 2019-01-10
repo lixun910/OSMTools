@@ -56,47 +56,16 @@ TravelTool::TravelTool()
 
 }
 
-TravelTool::TravelTool(std::vector<OGRFeature*> in_roads)
-: cpu_graph(0)
+TravelTool::TravelTool(std::vector<OGRFeature*> in_roads,
+                       double _radius,
+                       double _default_speed,
+                       double _penalty,
+                       std::map<wxString, double> _speed_limit_dict)
+: cpu_graph(0), radius(_radius), default_speed(_default_speed),
+penalty(_penalty), speed_limit_dict(speed_limit_dict)
 {
-    speed_limit_dict["road"]=32;
-    speed_limit_dict["motorway"] = 96 *0.6;
-    speed_limit_dict["motorway_link"] = 48;
-    speed_limit_dict["motorway_junction"] = 48;
-    speed_limit_dict["trunk"] = 80;
-    speed_limit_dict["trunk_link"] = 40;
-    speed_limit_dict["primary"] = 48 * 0.1;
-    speed_limit_dict["primary_link"] = 32 * 0.1;
-    speed_limit_dict["secondary"] = 40 * 0.1;
-    speed_limit_dict["secondary_link"] = 40 * 0.1;
-    speed_limit_dict["tertiary"] = 32;
-    speed_limit_dict["tertiary_link"] = 32;
-    speed_limit_dict["residential"] = 24;
-    speed_limit_dict["living_street"] = 16;
-    speed_limit_dict["service"] = 16;
-    speed_limit_dict["track"] = 32;
-    speed_limit_dict["pedestrian"] = 3.2;
-    speed_limit_dict["services"] = 3.2;
-    speed_limit_dict["bus_guideway"] = 3.2;
-    speed_limit_dict["path"] = 8;
-    speed_limit_dict["cycleway"] = 16;
-    speed_limit_dict["footway"] = 3.2;
-    speed_limit_dict["bridleway"] = 3.2;
-    speed_limit_dict["byway"] = 3.2;
-    speed_limit_dict["steps"] = 0.16;
-    speed_limit_dict["unclassified"] = 24;
-    speed_limit_dict["lane"] = 16;
-    speed_limit_dict["opposite_lane"] = 16;
-    speed_limit_dict["opposite"] = 16;
-    speed_limit_dict["grade1"] = 16;
-    speed_limit_dict["grade2"] = 16;
-    speed_limit_dict["grade3"] = 16;
-    speed_limit_dict["grade4"] = 16;
-    speed_limit_dict["grade5"] = 16;
-    speed_limit_dict["roundabout"] = 40;
-
     roads = in_roads;
-    num_gpus = DetectGPU();
+    num_gpus = 0;//DetectGPU();
     num_cores = boost::thread::hardware_concurrency();
     
     PreprocessRoads();
@@ -140,8 +109,7 @@ void TravelTool::PreprocessRoads()
             for (j=0; j<n_pts; ++j) {
                 OGRPoint pt;
                 line->getPoint(j, &pt);
-                RD_POINT rd_pt =
-                        std::make_pair(pt.getX(), pt.getY());
+                RD_POINT rd_pt = std::make_pair(pt.getX(), pt.getY());
 
                 if (nodes_dict.find(rd_pt) == nodes_dict.end()) {
                     nodes_dict[rd_pt] = node_count;
@@ -204,7 +172,8 @@ void TravelTool::BuildCPUGraph()
     size_t i, j, cost, n_pts, node_idx, nbr_idx;
     int from, to;
     std::string highway, oneway, maxspeed;
-    double speed_limit = 20.0, length;
+    double speed_limit = default_speed;
+    double length;
 
     for (i=0; i<edges.size(); ++i) {
         n_pts = edges[i].size();
@@ -219,6 +188,10 @@ void TravelTool::BuildCPUGraph()
             highway = feature->GetFieldAsString("highway");
             oneway = feature->GetFieldAsString("oneway");
             maxspeed = feature->GetFieldAsString("maxspeed");
+            if (speed_limit_dict.find(highway) != speed_limit_dict.end()) {
+                speed_limit = speed_limit_dict[highway];
+            }
+            /*
             if (maxspeed.empty()) {
                 if (speed_limit_dict.find(highway) != speed_limit_dict.end()) {
                     speed_limit = speed_limit_dict[highway];
@@ -228,6 +201,7 @@ void TravelTool::BuildCPUGraph()
                 int val = atoi(sp_str.c_str()); // km
                 if (val > 0 && val < 100) speed_limit = val * 1.6;
             }
+             */
             oneway_dict[i] = std::strcmp(oneway.c_str(),"yes") == 0 ? true : false;
         } else {
             oneway_dict[i] = false;
@@ -248,7 +222,6 @@ void TravelTool::BuildCPUGraph()
             addEdgeToGraph(cpu_graph, from, to, cost);
             if (oneway_dict[i]==false) {
                 addEdgeToGraph(cpu_graph, to, from, cost);
-                //edge_to_way[std::make_pair(to, from)] = i;
             }
         }
     }
@@ -278,14 +251,14 @@ int TravelTool::Query(OGRPoint& from_pt, OGRPoint& to_pt,
     q_pt[1] = from_pt.getY();
     kd_tree->annkSearch(q_pt, 2, nnIdx, dists, eps);
     int from_node_idx = nnIdx[0];
-    double c1 = ComputeArcDist(from_pt, nodes[from_node_idx]) / (20.0 * 1000);
+    double c1 = ComputeArcDist(from_pt, nodes[from_node_idx]) / (default_speed * 1000);
     c1 = c1 * 60 * 60; // to seconds
 
     q_pt[0] = to_pt.getX();
     q_pt[1] = to_pt.getY();
     kd_tree->annkSearch(q_pt, 2, nnIdx, dists, eps);
     int to_node_idx = nnIdx[0];
-    double c2 = ComputeArcDist(to_pt, nodes[to_node_idx]) / (20.0 * 1000);
+    double c2 = ComputeArcDist(to_pt, nodes[to_node_idx]) / (default_speed * 1000);
     c2 = c2 * 60 * 60; // to seconds
 
     delete[] q_pt;
@@ -439,7 +412,9 @@ void TravelTool::QueryHexMap(OGRPoint& start_pt, OGREnvelope& extent,
  * This function is for creating distance matrix
  *
  */
-void TravelTool::GetDistanceMatrix(std::vector<OGRFeature *> _query_points)
+void TravelTool::GetDistanceMatrix(std::vector<OGRFeature *> _query_points,
+                                   const wxString& out_file,
+                                   bool save_intermediate_files)
 {
     query_points = _query_points;
 
@@ -473,7 +448,7 @@ void TravelTool::GetDistanceMatrix(std::vector<OGRFeature *> _query_points)
             anchor_cnt++;
         }
         node_to_query[q_id].push_back(i);
-        double c = ComputeArcDist(*m_pt, nodes[q_id]) / (20.0 * 1000);
+        double c = ComputeArcDist(*m_pt, nodes[q_id]) / (default_speed * 1000);
         c = c * 60 * 60; // to seconds
         query_to_node[i] = std::make_pair(q_id, (int)c);
         
@@ -487,7 +462,7 @@ void TravelTool::GetDistanceMatrix(std::vector<OGRFeature *> _query_points)
     // remove circle way
     int from, to, cost;
     std::string highway, oneway, maxspeed;
-    double speed_limit = 20.0, length;
+    double speed_limit = default_speed, length;
     for (i=0; i<edges.size(); ++i) {
         n_pts = edges[i].size();
         OGRPoint start = edges[i][0];
@@ -527,7 +502,9 @@ void TravelTool::GetDistanceMatrix(std::vector<OGRFeature *> _query_points)
             }
         }
     }
-    //SaveMergedRoads("/Users/xun/Desktop/no_circle.shp");
+    if (save_intermediate_files) {
+        //SaveMergedRoads("/Users/xun/Desktop/no_circle.shp");
+    }
     
     // concat ways
     int node_idx, w1, w2;
@@ -712,7 +689,7 @@ void TravelTool::GetDistanceMatrix(std::vector<OGRFeature *> _query_points)
     ComputeDistMatrix(results);
     
     std::vector<wxString> query_ids;
-    SaveQueryResults("/Users/xun/Desktop/out.bin", query_size, results,
+    SaveQueryResults(out_file.mb_str(wxConvUTF8), query_size, results,
                      query_ids);
     
     free(results);
@@ -723,7 +700,7 @@ void TravelTool::ComputeDistMatrix(int* results)
     // actually query_size using anchor nodes
     int query_size = query_nodes.size();
     
-    if (num_gpus == 0) {
+    if (num_gpus <= 1) {
         ComputeDistMatrixCPU(results, query_size, num_cores);
         
     } else {

@@ -37,11 +37,18 @@ namespace OSMTools {
     public:
         TravelTool();
 
-        TravelTool(std::vector<OGRFeature*> roads);
+        TravelTool(std::vector<OGRFeature*> roads,
+                   double radius,
+                   double default_speed,
+                   double penalty,
+                   std::map<wxString, double> speed_limit_dict
+                   );
 
         ~TravelTool();
 
-        void GetDistanceMatrix(std::vector<OGRFeature*> query_points);
+        void GetDistanceMatrix(std::vector<OGRFeature*> query_points,
+                               const wxString& out_file,
+                               bool save_intermediate_files=false);
 
         void BuildCPUGraph();
 
@@ -103,6 +110,9 @@ namespace OSMTools {
         ANNkd_tree* kd_tree;
 
         CPUGraph* cpu_graph;
+        double radius;
+        double default_speed;
+        double penalty;
 
         float ratio_cpu_to_gpu;
         int  num_gpus;
@@ -155,8 +165,7 @@ namespace OSMTools {
         // final query nodes for dijkstra
         std::vector<int> query_nodes;
 
-
-        boost::unordered_map<std::string, int> speed_limit_dict;
+        std::map<wxString, double> speed_limit_dict;
 
     };
 

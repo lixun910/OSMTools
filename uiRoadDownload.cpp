@@ -11,14 +11,14 @@
 using namespace OSMTools;
 
 uiRoadDownload::uiRoadDownload(const wxString& title)
-    : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(500, 250))
+    : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(500, 300))
 {
     InitControls();
 }
 
 uiRoadDownload::uiRoadDownload(double top, double bottom,
         double left, double right, const wxString &title)
-    : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(500, 250))
+    : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(500, 300))
 {
     InitControls();
 
@@ -117,9 +117,17 @@ void uiRoadDownload::InitControls()
     hbox3->Add(tc_buffer, 0, wxRIGHT, 5);
     hbox3->Add(new wxStaticText(panel, -1, "%"));
 
+    wxBoxSizer *hbox4 = new wxBoxSizer(wxHORIZONTAL);
+    ch_way_type = new wxChoice(panel, -1);
+    ch_way_type->Append("Drive");
+    ch_way_type->SetSelection(0);
+    hbox4->Add(new wxStaticText(panel, -1, "Select road type:"));
+    hbox4->Add(ch_way_type, 0, wxLEFT, 5);
+
     wxBoxSizer *vbox = new wxBoxSizer(wxVERTICAL);
     vbox->Add(hbox1, 1, wxEXPAND);
     vbox->Add(hbox3, 0, wxEXPAND | wxALL, 10);
+    vbox->Add(hbox4, 0, wxEXPAND | wxALL, 10);
     vbox->Add(hbox2, 0, wxALIGN_RIGHT | wxRIGHT | wxBOTTOM, 10);
     panel->SetSizer(vbox);
 
