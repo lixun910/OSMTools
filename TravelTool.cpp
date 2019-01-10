@@ -57,15 +57,14 @@ TravelTool::TravelTool()
 }
 
 TravelTool::TravelTool(std::vector<OGRFeature*> in_roads,
-                       double _radius,
                        double _default_speed,
                        double _penalty,
                        std::map<wxString, double> _speed_limit_dict)
-: cpu_graph(0), radius(_radius), default_speed(_default_speed),
-penalty(_penalty), speed_limit_dict(speed_limit_dict)
+: cpu_graph(0), default_speed(_default_speed),
+speed_penalty(_penalty), speed_limit_dict(_speed_limit_dict)
 {
     roads = in_roads;
-    num_gpus = 0;//DetectGPU();
+    num_gpus = DetectGPU();
     num_cores = boost::thread::hardware_concurrency();
     
     PreprocessRoads();
@@ -88,6 +87,12 @@ wxString TravelTool::GetExeDir()
     return exeDir;
 
 }
+
+void TravelTool::SetGPURatio(double val)
+{
+    ratio_cpu_to_gpu =  1 - val;
+}
+
 void TravelTool::PreprocessRoads()
 {
     if (roads.empty() == true) return;
@@ -188,10 +193,7 @@ void TravelTool::BuildCPUGraph()
             highway = feature->GetFieldAsString("highway");
             oneway = feature->GetFieldAsString("oneway");
             maxspeed = feature->GetFieldAsString("maxspeed");
-            if (speed_limit_dict.find(highway) != speed_limit_dict.end()) {
-                speed_limit = speed_limit_dict[highway];
-            }
-            /*
+
             if (maxspeed.empty()) {
                 if (speed_limit_dict.find(highway) != speed_limit_dict.end()) {
                     speed_limit = speed_limit_dict[highway];
@@ -201,7 +203,7 @@ void TravelTool::BuildCPUGraph()
                 int val = atoi(sp_str.c_str()); // km
                 if (val > 0 && val < 100) speed_limit = val * 1.6;
             }
-             */
+            speed_limit = speed_limit / speed_penalty;
             oneway_dict[i] = std::strcmp(oneway.c_str(),"yes") == 0 ? true : false;
         } else {
             oneway_dict[i] = false;
@@ -484,6 +486,8 @@ void TravelTool::GetDistanceMatrix(std::vector<OGRFeature *> _query_points,
             int val = atoi(sp_str.c_str()); // km
             if (val > 0 && val < 100) speed_limit = val * 1.6;
         }
+        speed_limit = speed_limit / speed_penalty;
+
         oneway_dict[i] = std::strcmp(oneway.c_str(),"yes") == 0 ? true : false;
 
         for (j=0; j<n_pts-1; ++j) {
@@ -704,7 +708,9 @@ void TravelTool::ComputeDistMatrix(int* results)
         ComputeDistMatrixCPU(results, query_size, num_cores);
         
     } else {
-        ratio_cpu_to_gpu = 0.8;
+        if (ratio_cpu_to_gpu < 0 || ratio_cpu_to_gpu > 1) {
+            ratio_cpu_to_gpu = 0.8;
+        }
         int cpu_results = query_size * (ratio_cpu_to_gpu);
         int gpu_results = query_size - cpu_results;
 

@@ -38,7 +38,6 @@ namespace OSMTools {
         TravelTool();
 
         TravelTool(std::vector<OGRFeature*> roads,
-                   double radius,
                    double default_speed,
                    double penalty,
                    std::map<wxString, double> speed_limit_dict
@@ -61,6 +60,11 @@ namespace OSMTools {
                          std::vector<std::vector<OGRPolygon> >& hexagons,
                          std::vector<std::vector<int> >& costs,
                          bool create_hexagons = true);
+
+        static int DetectGPU();
+
+        void SetGPURatio(double val);
+
     protected:
 
         void PreprocessRoads();
@@ -103,16 +107,15 @@ namespace OSMTools {
                               int n_query, int* results,
                               const std::vector<wxString>& query_ids);
     
-        int DetectGPU();
+
         
     protected:
         double** xy;
         ANNkd_tree* kd_tree;
 
         CPUGraph* cpu_graph;
-        double radius;
         double default_speed;
-        double penalty;
+        double speed_penalty;
 
         float ratio_cpu_to_gpu;
         int  num_gpus;
