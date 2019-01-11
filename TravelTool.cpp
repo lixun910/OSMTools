@@ -101,39 +101,75 @@ void TravelTool::PreprocessRoads()
     OGRFeature* feature;
     OGRGeometry* geom;
     OGRLineString* line;
-    int i, j, idx, n_pts, node_count=0;
+    OGRMultiLineString* mline;
+    OGRGeometryCollection *poCol;
+    int i, j, k, idx, n_pts, node_count=0;
 
     // read ways
     for (i=0; i<n_roads; ++i) {
         feature = roads[i];
         geom = feature->GetGeometryRef();
-        std::vector<OGRPoint> e;
-        if (geom && geom->IsEmpty() == false) {
-            line = (OGRLineString*) geom;
-            n_pts = line->getNumPoints();
-            for (j=0; j<n_pts; ++j) {
-                OGRPoint pt;
-                line->getPoint(j, &pt);
-                RD_POINT rd_pt = std::make_pair(pt.getX(), pt.getY());
 
-                if (nodes_dict.find(rd_pt) == nodes_dict.end()) {
-                    nodes_dict[rd_pt] = node_count;
-                    node_appearance[node_count] = 1;
-                    nodes.push_back(pt);
-                    node_count ++;
-                } else {
-                    idx = nodes_dict[rd_pt];
-                    node_appearance[idx] += 1;
+        if (geom && geom->IsEmpty() == false) {
+            if (mline = dynamic_cast<OGRMultiLineString*>(geom)) {
+                poCol = (OGRGeometryCollection*) geom;
+                for(k=0; k< poCol->getNumGeometries(); ++k) {
+                    std::vector<OGRPoint> e;
+                    line = (OGRLineString*)(poCol->getGeometryRef(k));
+                    n_pts = line->getNumPoints();
+                    for (j=0; j<n_pts; ++j) {
+                        OGRPoint pt;
+                        line->getPoint(j, &pt);
+                        RD_POINT rd_pt = std::make_pair(pt.getX(), pt.getY());
+
+                        if (nodes_dict.find(rd_pt) == nodes_dict.end()) {
+                            nodes_dict[rd_pt] = node_count;
+                            node_appearance[node_count] = 1;
+                            nodes.push_back(pt);
+                            node_count ++;
+                        } else {
+                            idx = nodes_dict[rd_pt];
+                            node_appearance[idx] += 1;
+                        }
+                        // end points: [wayid, wayid..]
+                        if (j==0 || j == n_pts-1) {
+                            idx = nodes_dict[rd_pt];
+                            endpoint_dict[idx].push_back(i);
+                        }
+                        e.push_back(pt); // todo: possible memory issue
+                    }
+                    edges.push_back(e);
                 }
-                // end points: [wayid, wayid..]
-                if (j==0 || j == n_pts-1) {
-                    idx = nodes_dict[rd_pt];
-                    endpoint_dict[idx].push_back(i);
+                mline = NULL;
+            } else {
+                std::vector<OGRPoint> e;
+                line = (OGRLineString*) geom;
+                n_pts = line->getNumPoints();
+                for (j=0; j<n_pts; ++j) {
+                    OGRPoint pt;
+                    line->getPoint(j, &pt);
+                    RD_POINT rd_pt = std::make_pair(pt.getX(), pt.getY());
+
+                    if (nodes_dict.find(rd_pt) == nodes_dict.end()) {
+                        nodes_dict[rd_pt] = node_count;
+                        node_appearance[node_count] = 1;
+                        nodes.push_back(pt);
+                        node_count ++;
+                    } else {
+                        idx = nodes_dict[rd_pt];
+                        node_appearance[idx] += 1;
+                    }
+                    // end points: [wayid, wayid..]
+                    if (j==0 || j == n_pts-1) {
+                        idx = nodes_dict[rd_pt];
+                        endpoint_dict[idx].push_back(i);
+                    }
+                    e.push_back(pt); // todo: possible memory issue
                 }
-                e.push_back(pt); // todo: possible memory issue
+                edges.push_back(e);
             }
         }
-        edges.push_back(e);
+
     }
     oneway_dict.resize(edges.size(), false);
 
