@@ -33,23 +33,154 @@ namespace OSMTools {
         wxImage* image;
     };
 
-    class TravelTool {
+    class TravelBass {
     public:
-        TravelTool();
+        TravelBass();
 
-        TravelTool(std::vector<OGRFeature*> roads,
+        TravelBass(std::vector<OGRFeature*> roads,
                    double default_speed,
                    double penalty,
                    std::map<wxString, double> speed_limit_dict
                    );
 
-        ~TravelTool();
+        virtual ~TravelBass();
+
+        static int DetectGPU();
+
+        void CreateWeightsFile(wxString w_file_path);
+        
+    protected:
+
+        void PreprocessRoads();
+
+        double EarthMeterToDegree(double d);
+        
+        double ComputeArcDist(OGRPoint& from, OGRPoint& to);
+
+        wxString GetExeDir();
+        
+    protected:
+        double** xy;
+        ANNkd_tree* kd_tree;
+
+        double default_speed;
+        double speed_penalty;
+        
+        int  num_nodes;
+        int  num_edges;
+
+        std::vector<OGRFeature*> roads;
+
+        std::vector<OGRPoint> nodes;
+
+        // index for finding idx of node in nodes[] by (lat, lon)
+        boost::unordered_map<RD_POINT, int> nodes_dict;
+
+        // node: count of its edge appearance
+        boost::unordered_map<int, int> node_appearance;
+
+        std::vector<std::vector<OGRPoint> > edges;
+
+        std::vector<bool> oneway_dict;
+
+        // end node: [way index, way index...]
+        boost::unordered_map<int, std::vector<int> > endpoint_dict;
+
+        std::map<wxString, double> speed_limit_dict;
+
+    };
+
+
+    class TravelDistanceMatrix : public TravelBass
+    {
+        //std::vector<OGRFeature*> query_points;
+        float ratio_cpu_to_gpu;
+        int   num_gpus;
+        int   num_cores;
+
+        // indicate if node was included in final graph
+        std::vector<bool> nodes_flag;
+
+        // final query nodes for dijkstra
+        std::vector<int> query_nodes;
+
+        // removed edge: concat to edge
+        boost::unordered_map<int, int> removed_edges;
+
+        // node : [nbr_node, cost], [nbr_node, cost],...
+        boost::unordered_map<int, std::vector<std::pair<int, double> > > edges_dict;
+
+        // [node idx, node idx] : cost (seconds)
+        boost::unordered_map<std::pair<int, int>, int> pair_cost;
+
+        // anchor point idx : [idx-in-query_nodes]
+        boost::unordered_map<int, std::vector<int> > node_to_query;
+
+        // idx-in-query : [anchor point idx, cost]
+        std::vector<std::pair<int, int> > query_to_node;
+
+    public:
+        TravelDistanceMatrix(std::vector<OGRFeature*> roads,
+                      double default_speed,
+                      double penalty,
+                      std::map<wxString, double> speed_limit_dict);
+
+        virtual ~TravelDistanceMatrix();
 
         void GetDistanceMatrix(std::vector<OGRFeature*> query_points,
                                const wxString& out_file,
                                bool save_intermediate_files=false);
 
-        void BuildCPUGraph();
+        void SetGPURatio(double val);
+
+    protected:
+        int GetValidEdgeId(int idx);
+
+        void AddEdge(int way_idx, OGRPoint& from, OGRPoint& to, int cost);
+
+        bool MergeTwoWaysByStart(int w1, int w2);
+
+        bool MergeTwoWaysByEnd(int w1, int w2);
+
+        bool SaveQueryResults(const char* file_path,
+                          int n_query, int* results,
+                          const std::vector<wxString>& query_ids);
+
+        void ComputeDistMatrix(int* results);
+
+        void ComputeDistMatrixCPU(int* results, int query_size, int nCPUs);
+
+        void ComputeDistMatrixGPU(int* results, int query_size, int offset);
+
+        void dijkstra_thread(CPUGraph* graph,
+                         const std::vector<int>& query_indexes,
+                         int* results,
+                         const std::vector<std::pair<int, int> >& query_to_node,
+                         boost::unordered_map<int, std::vector<int> >& node_to_query,
+                         int a, int b);
+
+        void SaveMergedRoads(const char* shp_file_name);
+        void SaveQueryNodes(const char* shp_file_name);
+        void SaveGraphToShapefile(const char* shp_file_name);
+    };
+
+
+
+    class TravelHeatMap : public TravelBass
+    {
+    protected:
+        CPUGraph* cpu_graph;
+
+        // [node idx, node idx] : way id
+        boost::unordered_map<std::pair<int, int>, int> edge_to_way;
+
+    public:
+        TravelHeatMap(std::vector<OGRFeature*> roads,
+                      double default_speed,
+                      double penalty,
+                      std::map<wxString, double> speed_limit_dict);
+
+        virtual ~TravelHeatMap();
 
         int Query(OGRPoint& from_pt, OGRPoint& to_pt,
                   std::vector<OGRLineString>& ogr_line,
@@ -60,120 +191,9 @@ namespace OSMTools {
                          std::vector<std::vector<OGRPolygon> >& hexagons,
                          std::vector<std::vector<int> >& costs,
                          bool create_hexagons = true);
-
-        static int DetectGPU();
-
-        void SetGPURatio(double val);
-
-        void CreateWeightsFile(wxString w_file_path);
-        
     protected:
-
-        void PreprocessRoads();
-        
-        void ComputeDistMatrix(int* results);
-        
-        void ComputeDistMatrixCPU(int* results, int query_size, int nCPUs);
-
-        void ComputeDistMatrixGPU(int* results, int query_size, int offset);
-
-        void dijkstra_thread(CPUGraph* graph,
-                             const std::vector<int>& query_indexes,
-                             int* results,
-                             const std::vector<std::pair<int, int> >& query_to_node,
-                             boost::unordered_map<int, std::vector<int> >& node_to_query,
-                             int a, int b);
-        
-        bool MergeTwoWaysByStart(int w1, int w2);
-
-        bool MergeTwoWaysByEnd(int w1, int w2);
-
-        double EarthMeterToDegree(double d);
-        
-        double ComputeArcDist(OGRPoint& from, OGRPoint& to);
-
-        void AddEdge(int way_idx, OGRPoint& from,
-                OGRPoint& to, int cost);
-
-        void SaveMergedRoads(const char* shp_file_name);
-
-        void SaveGraphToShapefile(const char* shp_file_name);
-        
-        void SaveQueryNodes(const char* shp_file_name);
-        
-        int GetValidEdgeId(int idx);
-        
-        wxString GetExeDir();
-
-        bool SaveQueryResults(const char* file_path,
-                              int n_query, int* results,
-                              const std::vector<wxString>& query_ids);
-    
-
-        
-    protected:
-        double** xy;
-        ANNkd_tree* kd_tree;
-
-        CPUGraph* cpu_graph;
-        double default_speed;
-        double speed_penalty;
-
-        float ratio_cpu_to_gpu;
-        int  num_gpus;
-        int  num_cores;
-        
-        int  num_nodes;
-        int  num_edges;
-
-        std::vector<OGRFeature*> roads;
-
-        std::vector<OGRFeature*> query_points;
-
-        std::vector<std::vector<OGRPoint> > edges;
-
-        std::vector<bool> oneway_dict;
-
-        // removed edge: concat to edge
-        boost::unordered_map<int, int> removed_edges;
-
-        boost::unordered_map<int,
-            std::vector<std::pair<int, double> > > edges_dict;
-
-        std::vector<OGRPoint> nodes;
-
-        std::vector<bool> nodes_flag;
-
-        boost::unordered_map<RD_POINT, int> nodes_dict;
-
-        // [node idx, node idx] : cost (seconds)
-        boost::unordered_map<std::pair<int, int>, int> pair_cost;
-
-        // [node idx, node idx] : way id
-        boost::unordered_map<std::pair<int, int>, int> edge_to_way;
-
-        // node: count of edge appearance
-        boost::unordered_map<int, int> node_appearance;
-
-        // end node: [way index, way index...]
-        boost::unordered_map<int, std::vector<int> > endpoint_dict;
-
-        // anchor points in roads
-        boost::unordered_map<int, bool> anchor_points;
-
-        // anchor point idx : [idx-in-query_nodes]
-        boost::unordered_map<int, std::vector<int> > node_to_query;
-
-        // idx-in-query : [anchor point idx, cost]
-        std::vector<std::pair<int, int> > query_to_node;
-        
-        // final query nodes for dijkstra
-        std::vector<int> query_nodes;
-
-        std::map<wxString, double> speed_limit_dict;
-
+        void BuildCPUGraph();
     };
-
 }
 
 #endif //OSMTOOLSPROJECT_TRAVELTOOL_H
