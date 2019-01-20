@@ -33,6 +33,11 @@ namespace OSMTools {
         wxImage* image;
     };
 
+    ////////////////////////////////////////////////////////////////////////////////
+    //
+    // Class TravelBass
+    //
+    ////////////////////////////////////////////////////////////////////////////////
     class TravelBass {
     public:
         TravelBass();
@@ -40,7 +45,11 @@ namespace OSMTools {
         TravelBass(std::vector<OGRFeature*> roads,
                    double default_speed,
                    double penalty,
-                   std::map<wxString, double> speed_limit_dict
+                   std::map<wxString, double> speed_limit_dict,
+                   const wxString& highway_type_field,
+                   const wxString& max_speed_field,
+                   const wxString& one_way_field,
+                   const wxString& one_way_flag = "yes"
                    );
 
         virtual ~TravelBass();
@@ -69,6 +78,12 @@ namespace OSMTools {
         int  num_nodes;
         int  num_edges;
 
+        bool is_osm;
+        int  way_type_idx;
+        int  one_way_idx;
+        int  max_speed_idx;
+        wxString one_way_flag;
+
         std::vector<OGRFeature*> roads;
 
         std::vector<OGRPoint> nodes;
@@ -81,6 +96,8 @@ namespace OSMTools {
 
         std::vector<std::vector<OGRPoint> > edges;
 
+        std::vector<int> edge_to_feture;
+
         std::vector<bool> oneway_dict;
 
         // end node: [way index, way index...]
@@ -91,8 +108,15 @@ namespace OSMTools {
     };
 
 
+    ////////////////////////////////////////////////////////////////////////////////
+    //
+    // Class TravelDistanceMatrix
+    //
+    ////////////////////////////////////////////////////////////////////////////////
     class TravelDistanceMatrix : public TravelBass
     {
+    protected:
+
         //std::vector<OGRFeature*> query_points;
         float ratio_cpu_to_gpu;
         int   num_gpus;
@@ -121,9 +145,13 @@ namespace OSMTools {
 
     public:
         TravelDistanceMatrix(std::vector<OGRFeature*> roads,
-                      double default_speed,
-                      double penalty,
-                      std::map<wxString, double> speed_limit_dict);
+                             double default_speed,
+                             double penalty,
+                             std::map<wxString, double> speed_limit_dict,
+                             const wxString& highway_type_field,
+                             const wxString& max_speed_field,
+                             const wxString& one_way_field,
+                             const wxString& _one_way_flag = "yes");
 
         virtual ~TravelDistanceMatrix();
 
@@ -165,7 +193,11 @@ namespace OSMTools {
     };
 
 
-
+    ////////////////////////////////////////////////////////////////////////////////
+    //
+    // Class TravelHeatMap
+    //
+    ////////////////////////////////////////////////////////////////////////////////
     class TravelHeatMap : public TravelBass
     {
     protected:
@@ -174,11 +206,16 @@ namespace OSMTools {
         // [node idx, node idx] : way id
         boost::unordered_map<std::pair<int, int>, int> edge_to_way;
 
+
     public:
         TravelHeatMap(std::vector<OGRFeature*> roads,
                       double default_speed,
                       double penalty,
-                      std::map<wxString, double> speed_limit_dict);
+                      std::map<wxString, double> speed_limit_dict,
+                      const wxString& highway_type_field,
+                      const wxString& max_speed_field,
+                      const wxString& one_way_field,
+                      const wxString& _one_way_flag = "yes");
 
         virtual ~TravelHeatMap();
 

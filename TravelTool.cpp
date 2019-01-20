@@ -10,11 +10,11 @@
 
 
 #ifndef PI
-#define PI 3.141592653589793238463
+#define PI 3.14159265358979323846264338327950288
 #endif
 
 #ifndef PI_OVER_180
-#define PI_OVER_180 0.017453292519943
+#define PI_OVER_180 0.017453292519943295
 #endif
 
 #ifndef EARTH_RADIUS
@@ -51,6 +51,11 @@ wxColour GradientColor::GetColor(double val)
     return *wxWHITE;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+//
+// Class TravelBass
+//
+////////////////////////////////////////////////////////////////////////////////
 TravelBass::TravelBass()
 {
 
@@ -59,13 +64,29 @@ TravelBass::TravelBass()
 TravelBass::TravelBass(std::vector<OGRFeature*> in_roads,
                        double _default_speed,
                        double _penalty,
-                       std::map<wxString, double> _speed_limit_dict)
+                       std::map<wxString, double> _speed_limit_dict,
+                       const wxString& highway_type_field,
+                       const wxString& max_speed_field,
+                       const wxString& one_way_field,
+                       const wxString& _one_way_flag)
 : default_speed(_default_speed),
-speed_penalty(_penalty), speed_limit_dict(_speed_limit_dict)
+speed_penalty(_penalty), speed_limit_dict(_speed_limit_dict),
+one_way_flag(_one_way_flag)
 {
     roads = in_roads;
     
     PreprocessRoads();
+
+    // test if osm roads
+    is_osm = true;
+    OGRFeature* feature = roads[0];
+    way_type_idx = feature->GetFieldIndex(highway_type_field.mb_str(wxConvUTF8));
+    one_way_idx = feature->GetFieldIndex(one_way_field.mb_str(wxConvUTF8));
+    max_speed_idx = feature->GetFieldIndex(max_speed_field.mb_str(wxConvUTF8));
+
+    if (way_type_idx < 0 || one_way_idx < 0 || max_speed_idx < 0) {
+        is_osm = false;
+    }
 }
 
 TravelBass::~TravelBass()
@@ -103,8 +124,9 @@ void TravelBass::PreprocessRoads()
         if (geom && geom->IsEmpty() == false) {
             mline = dynamic_cast<OGRMultiLineString*>(geom);
             if (mline != NULL) {
+                // multi-linestring
                 poCol = (OGRGeometryCollection*) geom;
-                for(k=0; k< poCol->getNumGeometries(); ++k) {
+                for (k=0; k< poCol->getNumGeometries(); ++k) {
                     std::vector<OGRPoint> e;
                     line = (OGRLineString*)(poCol->getGeometryRef(k));
                     n_pts = line->getNumPoints();
@@ -129,10 +151,13 @@ void TravelBass::PreprocessRoads()
                         }
                         e.push_back(pt); // todo: possible memory issue
                     }
+                    edge_to_feture.push_back(i);
                     edges.push_back(e);
                 }
                 mline = NULL;
+
             } else {
+                // linestring
                 std::vector<OGRPoint> e;
                 line = (OGRLineString*) geom;
                 n_pts = line->getNumPoints();
@@ -157,6 +182,7 @@ void TravelBass::PreprocessRoads()
                     }
                     e.push_back(pt); // todo: possible memory issue
                 }
+                edge_to_feture.push_back(i);
                 edges.push_back(e);
             }
         }
@@ -227,35 +253,45 @@ double TravelBass::EarthMeterToDegree(double d)
 
 double TravelBass::ComputeArcDist(OGRPoint& from, OGRPoint& to)
 {
-    double lat1 = from.getX();
-    double lon1 = from.getY();
-    double lat2 = to.getX();
-    double lon2 = to.getY();
+    double lon1 = from.getX();
+    double lat1 = from.getY();
+
+    double lon2 = to.getX();
+    double lat2 = to.getY();
+
     // degree to rad
-    lat1 = lat1 * PI_OVER_180;
-    lon1 = lon1 * PI_OVER_180;
-    lat2 = lat2 * PI_OVER_180;
-    lon2 = lon2 * PI_OVER_180;
+    lat1 = lat1 * PI / 180.0;
+    lon1 = lon1 * PI / 180.0;
+
+    lat2 = lat2 * PI / 180.0;
+    lon2 = lon2 * PI / 180.0;
 
     // this is the haversine formula which is particularly well-conditioned
     double dlat = lat2 - lat1;
     double dlon = lon2 - lon1;
 
     double a = pow(sin(dlat/2.0), 2);
-    double b = cos(lat1) * cos(lat2) * pow(sin(dlon/2.0),2);
-    return 2 * EARTH_RADIUS * asin(sqrt(a+b));
+    double b = cos(lat1) * cos(lat2) * pow(sin(dlon/2.0), 2);
+    double d = 2 * EARTH_RADIUS * asin(sqrt(a+b));
+
+    return d; // meters
 }
 
-
-
-
-
-
-
+////////////////////////////////////////////////////////////////////////////////
+//
+// Class TravelDistanceMatrix
+//
+////////////////////////////////////////////////////////////////////////////////
 TravelDistanceMatrix::TravelDistanceMatrix(std::vector<OGRFeature*> roads,
-                                double default_speed, double penalty,
-                                std::map<wxString, double> speed_limit_dict)
-:  TravelBass(roads, default_speed, penalty, speed_limit_dict)
+                                    double default_speed, double penalty,
+                                    std::map<wxString, double> speed_limit_dict,
+                                    const wxString& _highway_type_field,
+                                    const wxString& _max_speed_field,
+                                    const wxString& _one_way_field,
+                                    const wxString& _one_way_flag)
+:  TravelBass(roads, default_speed, penalty, speed_limit_dict,
+              _highway_type_field, _max_speed_field, _one_way_field,
+              _one_way_flag)
 {
     num_gpus = DetectGPU();
     num_cores = boost::thread::hardware_concurrency();
@@ -339,9 +375,9 @@ void TravelDistanceMatrix::GetDistanceMatrix(std::vector<OGRFeature *> query_poi
         }
         // compute pair_cost
         feature = roads[i];
-        highway = feature->GetFieldAsString("highway");
-        oneway = feature->GetFieldAsString("oneway");
-        maxspeed = feature->GetFieldAsString("maxspeed");
+        highway = feature->GetFieldAsString(way_type_idx);
+        oneway = feature->GetFieldAsString(one_way_idx);
+        maxspeed = feature->GetFieldAsString(max_speed_idx);
         if (maxspeed.empty()) {
             if (speed_limit_dict.find(highway) != speed_limit_dict.end()) {
                 speed_limit = speed_limit_dict[highway];
@@ -353,7 +389,11 @@ void TravelDistanceMatrix::GetDistanceMatrix(std::vector<OGRFeature *> query_poi
         }
         speed_limit = speed_limit / speed_penalty;
 
-        oneway_dict[i] = std::strcmp(oneway.c_str(),"yes") == 0 ? true : false;
+        if (oneway.find(one_way_flag.mb_str(wxConvUTF8)) == std::string::npos) {
+            oneway_dict[i] = false;
+        } else {
+            oneway_dict[i] = true;
+        }
 
         for (j=0; j<n_pts-1; ++j) {
             start = edges[i][j];
@@ -460,7 +500,9 @@ void TravelDistanceMatrix::GetDistanceMatrix(std::vector<OGRFeature *> query_poi
             // and therefore its content has been updated
         }
     }
-    //SaveMergedRoads("/Users/xun/Desktop/merge.shp");
+    if (save_intermediate_files) {
+        //SaveMergedRoads("/Users/xun/Desktop/merge.shp");
+    }
 
     // simplify ways
     for (i=0; i<edges.size(); ++i) {
@@ -496,10 +538,11 @@ void TravelDistanceMatrix::GetDistanceMatrix(std::vector<OGRFeature *> query_poi
             prev_pt = pt;
         }
     }
-
-    //SaveMergedRoads("/Users/xun/Desktop/simplified.shp");
-    //SaveGraphToShapefile("/Users/xun/Desktop/graph.shp");
-    //SaveQueryNodes("/Users/xun/Desktop/query.shp");
+    if (save_intermediate_files) {
+        //SaveMergedRoads("/Users/xun/Desktop/simplified.shp");
+        //SaveGraphToShapefile("/Users/xun/Desktop/graph.shp");
+        //SaveQueryNodes("/Users/xun/Desktop/query.shp");
+    }
 
     // re-index nodes and edges
     int valid_index = 0;
@@ -1044,12 +1087,18 @@ void TravelDistanceMatrix::SaveGraphToShapefile(const char* shp_file_name)
 
 
 
-
 TravelHeatMap::TravelHeatMap(std::vector<OGRFeature*> roads,
                              double default_speed,
                              double penalty,
-                             std::map<wxString, double> speed_limit_dict)
-:  cpu_graph(0), TravelBass(roads, default_speed, penalty, speed_limit_dict)
+                             std::map<wxString, double> speed_limit_dict,
+                             const wxString& _highway_type_field,
+                             const wxString& _max_speed_field,
+                             const wxString& _one_way_field,
+                             const wxString& _one_way_flag)
+:  TravelBass(roads, default_speed, penalty, speed_limit_dict,
+              _highway_type_field, _max_speed_field, _one_way_field,
+              _one_way_flag),
+   cpu_graph(0)
 {
     BuildCPUGraph();
 }
@@ -1073,15 +1122,6 @@ void TravelHeatMap::BuildCPUGraph()
     OGRGeometry* geom;
     OGRLineString* line;
 
-    // test if osm roads
-    bool is_osm = true;
-    feature = roads[0];
-    if (feature->GetFieldIndex("highway") < 0 ||
-        feature->GetFieldIndex("oneway") < 0 ||
-        feature->GetFieldIndex("maxspeed") < 0) {
-        is_osm = false;
-    }
-
     size_t i, j, cost, n_pts, node_idx, nbr_idx;
     int from, to;
     std::string highway, oneway, maxspeed;
@@ -1089,16 +1129,13 @@ void TravelHeatMap::BuildCPUGraph()
     double length;
 
     for (i=0; i<edges.size(); ++i) {
-        n_pts = edges[i].size();
-        OGRPoint start = edges[i][0];
-        OGRPoint end = edges[i][n_pts-1];
-
         // compute pair_cost
-        feature = roads[i];
+        int feature_idx = edge_to_feture[i];
+        feature = roads[feature_idx];
         if (is_osm) {
-            highway = feature->GetFieldAsString("highway");
-            oneway = feature->GetFieldAsString("oneway");
-            maxspeed = feature->GetFieldAsString("maxspeed");
+            highway = feature->GetFieldAsString(way_type_idx);
+            oneway = feature->GetFieldAsString(one_way_idx);
+            maxspeed = feature->GetFieldAsString(max_speed_idx);
 
             if (maxspeed.empty()) {
                 if (speed_limit_dict.find(highway) != speed_limit_dict.end()) {
@@ -1110,14 +1147,19 @@ void TravelHeatMap::BuildCPUGraph()
                 if (val > 0 && val < 100) speed_limit = val * 1.6;
             }
             speed_limit = speed_limit / speed_penalty;
-            oneway_dict[i] = std::strcmp(oneway.c_str(),"yes") == 0 ? true : false;
+            if (oneway.find(one_way_flag.mb_str(wxConvUTF8)) == std::string::npos) {
+                oneway_dict[i] = false;
+            } else {
+                oneway_dict[i] = true;
+            }
         } else {
             oneway_dict[i] = false;
         }
 
+        n_pts = edges[i].size();
         for (j=0; j<n_pts-1; ++j) {
-            start = edges[i][j];
-            end = edges[i][j+1];
+            OGRPoint start = edges[i][j];
+            OGRPoint end = edges[i][j+1];
             RD_POINT rd_from = std::make_pair(start.getX(), start.getY());
             RD_POINT rd_to = std::make_pair(end.getX(), end.getY());
             from = nodes_dict[rd_from];
@@ -1126,19 +1168,16 @@ void TravelHeatMap::BuildCPUGraph()
             cost = length;
             if (is_osm) cost = cost / (speed_limit * KPM_TO_MPS);
 
-            edge_to_way[std::make_pair(from, to)] = i;
+            edge_to_way[std::make_pair(from, to)] = feature_idx;
             addEdgeToGraph(cpu_graph, from, to, cost);
             if (oneway_dict[i]==false) {
                 addEdgeToGraph(cpu_graph, to, from, cost);
+                edge_to_way[std::make_pair(to, from)] = feature_idx;
             }
         }
     }
 }
 
-/**
- * This function is for query travel path only
- *
- */
 int TravelHeatMap::Query(OGRPoint& from_pt, OGRPoint& to_pt,
                       std::vector<OGRLineString>& ogr_line,
                       std::vector<int>& way_ids)
@@ -1159,16 +1198,20 @@ int TravelHeatMap::Query(OGRPoint& from_pt, OGRPoint& to_pt,
     q_pt[1] = from_pt.getY();
     kd_tree->annkSearch(q_pt, 2, nnIdx, dists, eps);
     int from_node_idx = nnIdx[0];
-    double c1 = ComputeArcDist(from_pt, nodes[from_node_idx]) / (default_speed * 1000);
-    c1 = c1 * 60 * 60; // to seconds
-
+    double c1 = ComputeArcDist(from_pt, nodes[from_node_idx]);
+    if (is_osm) {
+        c1 = c1 / (default_speed * 1000);
+        c1 = c1 * 60 * 60; // to seconds
+    }
     q_pt[0] = to_pt.getX();
     q_pt[1] = to_pt.getY();
     kd_tree->annkSearch(q_pt, 2, nnIdx, dists, eps);
     int to_node_idx = nnIdx[0];
-    double c2 = ComputeArcDist(to_pt, nodes[to_node_idx]) / (default_speed * 1000);
-    c2 = c2 * 60 * 60; // to seconds
-
+    double c2 = ComputeArcDist(to_pt, nodes[to_node_idx]);
+    if (is_osm) {
+        c2 = c2 / (default_speed * 1000);
+        c2 = c2 * 60 * 60; // to seconds
+    }
     delete[] q_pt;
     delete[] nnIdx;
     delete[] dists;
@@ -1191,38 +1234,42 @@ int TravelHeatMap::Query(OGRPoint& from_pt, OGRPoint& to_pt,
     }
     if (node_path.empty()) return -1;
 
+    double check_length = 0;
     for (i=0; i<node_path.size()-1; ++i) {
         int from = node_path[i];
         int to = node_path[i+1];
         OGRLineString line;
         line.addPoint(&nodes[from]);
         line.addPoint(&nodes[to]);
+        check_length += ComputeArcDist(nodes[from], nodes[to]);
         ogr_line.push_back(line);
         std::pair<int, int> e(from, to);
         if (edge_to_way.find(e) != edge_to_way.end()) {
             way_ids.push_back(edge_to_way[e]);
-        } else {
-            std::pair<int, int> e_rev(to, from);
-            if (edge_to_way.find(e_rev) != edge_to_way.end()) {
-                way_ids.push_back(edge_to_way[e_rev]);
-            }
+        }
+        if (i==node_path.size()-2) {
+            OGRLineString line;
+            line.addPoint(&nodes[to]);
+            line.addPoint(&nodes[from_node_idx]);
+            check_length += ComputeArcDist(nodes[from_node_idx], nodes[to]);
+            ogr_line.push_back(line);
         }
     }
 
-    int c = (int)(c1 + c2 + results[to_node_idx]);
+    int c = (int)(results[to_node_idx]);
     return c;
 }
 
-/**
- * This function is for travel graph only
- *
- */
 void TravelHeatMap::QueryHexMap(OGRPoint& start_pt, OGREnvelope& extent,
                              double hexagon_radius,
                              std::vector<std::vector<OGRPolygon> >& hexagons,
                              std::vector<std::vector<int> >& costs,
                              bool create_hexagons)
 {
+#ifdef __GEODA__
+    ANN_DIST_TYPE = 2;
+#endif
+
     // query using dijkstra
     ANNidxArray nnIdx = new ANNidx[2];
     ANNdistArray dists = new ANNdist[2];
@@ -1241,9 +1288,6 @@ void TravelHeatMap::QueryHexMap(OGRPoint& start_pt, OGREnvelope& extent,
              node_to_query, 0);
 
     double eps = 0.00000001; // error bound
-#ifdef __GEODA__
-    ANN_DIST_TYPE = 2;
-#endif
 
     if (hexagons.empty()) create_hexagons = true;
     if (create_hexagons) hexagons.clear();
@@ -1300,18 +1344,24 @@ void TravelHeatMap::QueryHexMap(OGRPoint& start_pt, OGREnvelope& extent,
                 hex_row.push_back(poly);
             }
             cx = x + hexagon_radius;
-            cy = y + hex_height + (side_length / 2);
+            cy = y;// + hex_height + (side_length / 2);
 
             double q_pt[2];
             q_pt[0] = cx;
             q_pt[1] = cy;
+
             kd_tree->annkSearch(q_pt, 2, nnIdx, dists, eps);
+
             int node_idx = nnIdx[0];
             if (sqrt(dists[0]) > hexagon_radius) {
                 cost_row.push_back(INT_MAX); // not valid distance
             } else if (results[node_idx] == INT_MAX) {
                 node_idx = nnIdx[1]; // try second anchor point
-                cost_row.push_back(results[node_idx]);
+                if (results[node_idx] == INT_MAX) {
+                    cost_row.push_back(INT_MAX); // not valid distance
+                } else {
+                    cost_row.push_back(results[node_idx]);
+                }
             } else {
                 cost_row.push_back(results[node_idx]);
             }

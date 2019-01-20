@@ -959,14 +959,9 @@ void dijkstra(struct CPUGraph* graph, int src, int* results,
         }
     }
 
-    //free allocated memory
-    delete[] minHeap->pos;
-    for (int i=1; i<minHeap->capacity; i++) delete minHeap->array[i];
-    delete[] minHeap->array;
-    delete minHeap;
-
     if (path) {
         // return path
+        memcpy(results, dist, sizeof(int) * V);
         
     } else {
         if (node_to_query.empty() && query_to_node.empty()) {
@@ -997,6 +992,12 @@ void dijkstra(struct CPUGraph* graph, int src, int* results,
             }
         }
     }
+    
+    //free allocated memory
+    delete[] minHeap->pos;
+    for (int i=1; i<minHeap->capacity; i++) delete minHeap->array[i];
+    delete[] minHeap->array;
+    delete minHeap;
 }
 
 void freeGraph(CPUGraph* graph)
