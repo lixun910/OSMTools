@@ -97,6 +97,12 @@ void uiRoadDownload::InitControls()
     infile_v_sizer->Add(infile_h_sizer,0, wxTOP, 10);
     infile_v_sizer->Add(st, 1, wxTOP | wxEXPAND, 10);
 
+    tc_infile_path->Disable();
+    btn_open_file->Disable();
+    rb_bbox->Disable();
+    rb_outline->Disable();
+    rb_bbox_outline->Disable();
+
     infile_panel->SetSizer(infile_v_sizer);
     nb->AddPage(infile_panel, _("Input data source"));
 
@@ -120,6 +126,9 @@ void uiRoadDownload::InitControls()
     wxBoxSizer *hbox4 = new wxBoxSizer(wxHORIZONTAL);
     ch_way_type = new wxChoice(panel, -1);
     ch_way_type->Append("Drive");
+    ch_way_type->Append("Walk");
+    ch_way_type->Append("Bike");
+    ch_way_type->Append("Transit");
     ch_way_type->SetSelection(0);
     hbox4->Add(new wxStaticText(panel, -1, "Select road type:"));
     hbox4->Add(ch_way_type, 0, wxLEFT, 5);
@@ -167,6 +176,12 @@ void uiRoadDownload::OnOKClick(wxCommandEvent& event)
     if (CheckInput(tc_bbox_up, lng_max) == false) return;
     if (CheckInput(tc_bbox_bottom, lng_min) == false) return;
 
+    if (ch_way_type->GetSelection() >=0) {
+        wxMessageDialog msg_dlg(this, _("Only Drive road type is implemented."),
+                                _("Info"),
+                                wxOK | wxOK_DEFAULT | wxICON_INFORMATION);
+        msg_dlg.ShowModal();
+    }
     if (cb_buffer->IsChecked()) {
         long buffer_val;
         wxString buffer_txt = tc_buffer->GetValue();
