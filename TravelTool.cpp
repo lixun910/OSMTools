@@ -374,7 +374,8 @@ void TravelDistanceMatrix::GetDistanceMatrix(std::vector<OGRFeature *> query_poi
             removed_edges[i] = -1; // means circle
         }
         // compute pair_cost
-        feature = roads[i];
+        int feature_idx = edge_to_feture[i];
+        feature = roads[feature_idx];
         highway = feature->GetFieldAsString(way_type_idx);
         oneway = feature->GetFieldAsString(one_way_idx);
         maxspeed = feature->GetFieldAsString(max_speed_idx);
