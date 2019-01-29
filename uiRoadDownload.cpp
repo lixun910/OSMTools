@@ -128,7 +128,6 @@ void uiRoadDownload::InitControls()
     ch_way_type->Append("Drive");
     ch_way_type->Append("Walk");
     ch_way_type->Append("Bike");
-    ch_way_type->Append("Transit");
     ch_way_type->SetSelection(0);
     hbox4->Add(new wxStaticText(panel, -1, "Select road type:"));
     hbox4->Add(ch_way_type, 0, wxLEFT, 5);
@@ -176,12 +175,11 @@ void uiRoadDownload::OnOKClick(wxCommandEvent& event)
     if (CheckInput(tc_bbox_up, lng_max) == false) return;
     if (CheckInput(tc_bbox_bottom, lng_min) == false) return;
 
-    if (ch_way_type->GetSelection() >=0) {
-        wxMessageDialog msg_dlg(this, _("Only Drive road type is implemented."),
-                                _("Info"),
-                                wxOK | wxOK_DEFAULT | wxICON_INFORMATION);
-        msg_dlg.ShowModal();
-    }
+    OSMTools::RoadType road_type = OSMTools::drive;
+
+    if (ch_way_type->GetSelection() == 1) road_type = OSMTools::walk;
+    else if (ch_way_type->GetSelection() == 2) road_type = OSMTools::bike;
+
     if (cb_buffer->IsChecked()) {
         long buffer_val;
         wxString buffer_txt = tc_buffer->GetValue();
@@ -214,8 +212,7 @@ void uiRoadDownload::OnOKClick(wxCommandEvent& event)
 
     OSMTools::Roads roads;
     roads.DownloadByBoundingBox(lat_min, lng_min, lat_max, lng_max,
-            OSMTools::drive,
-            json_fpath.mb_str(wxConvUTF8));
+            road_type, json_fpath.mb_str(wxConvUTF8));
     if (out_type.CmpNoCase("shp")==0) {
         roads.ReadOSMNodes(json_fpath);
         roads.SaveToShapefile(shp_fpath);

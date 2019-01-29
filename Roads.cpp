@@ -72,10 +72,25 @@ int Roads::GetNumEdges(std::vector<std::string>& nodes)
 std::string Roads::GetOSMFilter(RoadType road_type)
 {
     if (road_type == OSMTools::drive) {
-        return "way[\"highway\"][\"highway\"!~\"cycleway|bus_stop|elevator|footway|path|pedestrian|steps|track|proposed"
-               "|construction|bridleway|abandoned|platform|raceway|service\"][\"motor_vehicle\"!~\"no\"][\"motorcar\"!~\"no\"][\"service\"!~\"parking|parking_aisle|driveway|emergency_access\"]";
+        return "way[\"highway\"][\"highway\"!~\"cycleway|bus_stop|elevator|footway|path|pedestrian|steps|track|proposed|construction|bridleway|abandoned|platform|raceway|service\"][\"motor_vehicle\"!~\"no\"][\"motorcar\"!~\"no\"][\"service\"!~\"parking|parking_aisle|driveway|emergency_access\"]";
     } else if (road_type == OSMTools::walk) {
-        return "way[\"highway\"][\"highway\"!~\"motor|proposed|construction|abandoned|platform|raceway\"][\"foot\"!~\"no\"][\"pedestrians\"!~\"no\"]";
+        return "way[\"highway\"][\"highway\"!~\"motor|proposed|construction|abandoned|platform|raceway\"][\"foot\"!~\"no\"][\"service\"!~\"private\"]";
+
+    } else if (road_type == OSMTools::bike ) {
+        /*
+         [out:json][bbox:33.42624691286904,-111.98307260870936,33.455540239240435,-111.95513471961021];
+         (relation[type=route][route=bicycle];)->.result;
+         */
+        return "way[\"highway\"][\"highway\"!~\"footway|corridor|motor|proposed|construction|abandoned|platform|raceway\"][\"bicycle\"!~\"no\"][\"service\"!~\"private\"]";
+    } else if (road_type == OSMTools::transit) {
+        /*
+         [out:json][bbox:33.431173703367314,-111.99351352639498,33.44582077131526,-111.98149723000824];
+         ((
+         relation[type=route][route~"^(subway|monorail|aerialway|bus|trolleybus|ferry|train|tram)$"];
+         relation[type=public_transport][public_transport=stop_area];
+         );)->.result;
+         */
+        return "";
     }
     return "";
 }

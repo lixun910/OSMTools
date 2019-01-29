@@ -11,7 +11,7 @@
 #include <boost/unordered_map.hpp>
 
 namespace OSMTools {
-    enum RoadType {drive, walk};
+    enum RoadType {drive, walk, bike, transit};
 
     class Roads {
     public:
