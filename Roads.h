@@ -22,17 +22,15 @@ namespace OSMTools {
 
         bool DownloadByBoundingBox(double lat_min, double lat_max,
                 double lng_min, double lng_max, RoadType road_type,
-                const char* file_name);
+                const char* osm_filter, const char* file_name);
 
-        //bool DownloadByPlaceNames();
-
-        //bool DownloadByPolygon();
-
-        //bool DownloadByRadius();
+        bool DownloadByMapOutline(OGREnvelope* bbox, OGRGeometry *contour,
+                                  RoadType road_type, const char* osm_filter,
+                                  const char* file_name);
 
         void ReadOSMNodes(const char* file_name);
 
-        void SaveToShapefile(const char* file_name);
+        void SaveToShapefile(const char* file_name, OGRGeometry *contour=NULL);
 
         void SaveEdgesToShapefile(const char* file_name);
 
@@ -42,14 +40,14 @@ namespace OSMTools {
 
         int GetNumEdges(std::vector<std::string>& nodes);
 
-        boost::unordered_map<std::string, int> id_map;
-        std::vector<double> lat_arr;
-        std::vector<double> lon_arr;
-        boost::unordered_map<std::string,
-            std::vector<std::pair<std::string, double> > > edge_dict;
-
     protected:
-        std::string GetOSMFilter(RoadType road_type);
+        const char* get_json_path(const char* shp_path);
+
+        bool download_by_bbox(double lat_min, double lng_min,
+                             double lat_max, double lng_max,
+                             OSMTools::RoadType road_type,
+                             const char* osm_filter,
+                             const char *json_path);
 
         std::string GetValueFromLine(std::string line, bool quoted=true);
 
@@ -57,8 +55,13 @@ namespace OSMTools {
 
     protected:
         std::string base_url;
+        
         // properties for nodes
-
+        boost::unordered_map<std::string, int> id_map;
+        std::vector<double> lat_arr;
+        std::vector<double> lon_arr;
+        boost::unordered_map<std::string,
+        std::vector<std::pair<std::string, double> > > edge_dict;
 
         // properties for edges
         std::vector<std::string> way_arr;

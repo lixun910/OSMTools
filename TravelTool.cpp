@@ -1218,8 +1218,8 @@ int TravelHeatMap::Query(OGRPoint& from_pt, OGRPoint& to_pt,
     delete[] dists;
 
     // query path using dijkstra
-    int path[cpu_graph->V];
-    int results[cpu_graph->V];
+    int* path = new int[cpu_graph->V];
+    int* results = new int[cpu_graph->V];
     // node_to_query & query_to_node are not needed here
     boost::unordered_map<int, std::vector<int> > node_to_query;
     std::vector<std::pair<int, int> > query_to_node;
@@ -1258,6 +1258,8 @@ int TravelHeatMap::Query(OGRPoint& from_pt, OGRPoint& to_pt,
     }
 
     int c = (int)(results[to_node_idx]);
+    delete[] path;
+    delete[] results;
     return c;
 }
 
@@ -1284,7 +1286,7 @@ void TravelHeatMap::QueryHexMap(OGRPoint& start_pt, OGREnvelope& extent,
     boost::unordered_map<int, std::vector<int> > node_to_query;
     std::vector<std::pair<int, int> > query_to_node;
 
-    int results[cpu_graph->V];
+    int *results = new int[cpu_graph->V];
     dijkstra(cpu_graph, from_node_idx, results, query_to_node,
              node_to_query, 0);
 
@@ -1373,4 +1375,5 @@ void TravelHeatMap::QueryHexMap(OGRPoint& start_pt, OGREnvelope& extent,
     }
     delete[] nnIdx;
     delete[] dists;
+    delete[] results;
 }

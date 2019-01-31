@@ -909,7 +909,7 @@ void dijkstra(struct CPUGraph* graph, int src, int* results,
               int* path)
 {
     int V = graph->V;// Get the number of vertices in graph
-    int dist[V];      // dist values used to pick minimum weight edge in cut
+    int* dist = new int[V];      // dist values used to pick minimum weight edge in cut
 
     // minHeap represents set E
     struct MinHeap* minHeap = createMinHeap(V);
@@ -998,6 +998,7 @@ void dijkstra(struct CPUGraph* graph, int src, int* results,
     for (int i=1; i<minHeap->capacity; i++) delete minHeap->array[i];
     delete[] minHeap->array;
     delete minHeap;
+    delete[] dist;
 }
 
 void freeGraph(CPUGraph* graph)

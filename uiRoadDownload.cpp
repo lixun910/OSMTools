@@ -4,21 +4,24 @@
 #include <wx/notebook.h>
 #include <wx/artprov.h>
 #include <wx/filename.h>
+#include <wx/filefn.h>
 
+#include "../OGRUtils/OGRShapeUtils.h"
+#include "../OGRUtils/OGRDataUtils.h"
 #include "Roads.h"
 #include "uiRoadDownload.h"
 
 using namespace OSMTools;
 
 uiRoadDownload::uiRoadDownload(const wxString& title)
-    : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(500, 300))
+    : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(500, 440))
 {
     InitControls();
 }
 
 uiRoadDownload::uiRoadDownload(double top, double bottom,
         double left, double right, const wxString &title)
-    : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(500, 300))
+    : wxFrame(NULL, wxID_ANY, title, wxDefaultPosition, wxSize(500, 440))
 {
     InitControls();
 
@@ -38,7 +41,7 @@ void uiRoadDownload::InitControls()
     // main body
     wxPanel *panel = new wxPanel(this, -1);
 
-    wxNotebook *nb = new wxNotebook(panel, -1);
+    nb = new wxNotebook(panel, -1);
 
     // bbox page:
     wxPanel *page_bbox = new wxPanel(nb, -1);
@@ -97,12 +100,6 @@ void uiRoadDownload::InitControls()
     infile_v_sizer->Add(infile_h_sizer,0, wxTOP, 10);
     infile_v_sizer->Add(st, 1, wxTOP | wxEXPAND, 10);
 
-    tc_infile_path->Disable();
-    btn_open_file->Disable();
-    rb_bbox->Disable();
-    rb_outline->Disable();
-    rb_bbox_outline->Disable();
-
     infile_panel->SetSizer(infile_v_sizer);
     nb->AddPage(infile_panel, _("Input data source"));
 
@@ -131,18 +128,62 @@ void uiRoadDownload::InitControls()
     ch_way_type->SetSelection(0);
     hbox4->Add(new wxStaticText(panel, -1, "Select road type:"));
     hbox4->Add(ch_way_type, 0, wxLEFT, 5);
+    hbox4->Add(new wxStaticText(panel, -1, " Overpass API query text:"));
+
+    wxBoxSizer *hbox5 = new wxBoxSizer(wxHORIZONTAL);
+    tc_overpass = new wxTextCtrl(panel, -1, overpass_road, wxDefaultPosition,
+                                 wxSize(450, 100));
+    hbox5->Add(tc_overpass, 0, wxEXPAND);
 
     wxBoxSizer *vbox = new wxBoxSizer(wxVERTICAL);
     vbox->Add(hbox1, 1, wxEXPAND);
     vbox->Add(hbox3, 0, wxEXPAND | wxALL, 10);
     vbox->Add(hbox4, 0, wxEXPAND | wxALL, 10);
+    vbox->Add(hbox5, 0, wxEXPAND | wxALL, 10);
     vbox->Add(hbox2, 0, wxALIGN_RIGHT | wxRIGHT | wxBOTTOM, 10);
     panel->SetSizer(vbox);
 
     Centre();
 
+    btn_open_file->Bind(wxEVT_BUTTON, &uiRoadDownload::OnOpenFile, this);
+    ch_way_type->Bind(wxEVT_CHOICE, &uiRoadDownload::OnRoadTypeChange, this);
     ok->Bind(wxEVT_BUTTON, &uiRoadDownload::OnOKClick, this);
     cancel->Bind(wxEVT_BUTTON, &uiRoadDownload::OnCancelClick, this);
+}
+
+void uiRoadDownload::OnOpenFile(wxCommandEvent &event)
+{
+    wxString working_dir = wxGetCwd();
+    wxFileDialog openFileDialog(this, _("Open file"), working_dir, "",
+                                wildcard, wxFD_OPEN|wxFD_FILE_MUST_EXIST);
+    if (openFileDialog.ShowModal() == wxID_CANCEL) return;
+
+    wxString path = openFileDialog.GetPath();
+    tc_infile_path->SetValue(path);
+}
+
+wxString uiRoadDownload::get_output_path()
+{
+    wxString path;
+    wxString working_dir = wxGetCwd();
+    wxFileDialog openFileDialog(this, _("Open file"), working_dir, "",
+                                wildcard, wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+    if (openFileDialog.ShowModal() == wxID_OK) {
+        path = openFileDialog.GetPath();
+    }
+    return path;
+}
+
+void uiRoadDownload::OnRoadTypeChange(wxCommandEvent &event)
+{
+    int sel = ch_way_type->GetSelection();
+    if (sel == 0) {
+        tc_overpass->SetValue(overpass_road);
+    } else if (sel == 1) {
+        tc_overpass->SetValue(overpass_walk);
+    } else if (sel == 2) {
+        tc_overpass->SetValue(overpass_bike);
+    }
 }
 
 bool uiRoadDownload::CheckInput(wxTextCtrl *tc, double& val)
@@ -167,7 +208,101 @@ bool uiRoadDownload::CheckInput(wxTextCtrl *tc, double& val)
     return true;
 }
 
+void uiRoadDownload::OnCancelClick(wxCommandEvent& event)
+{
+    Destroy();
+}
+
 void uiRoadDownload::OnOKClick(wxCommandEvent& event)
+{
+    int page_index = nb->GetSelection();
+    if (page_index == 0) {
+        download_from_bbox();
+    } else if (page_index == 1) {
+        download_from_input_ds();
+    }
+}
+
+void uiRoadDownload::download_from_input_ds()
+{
+    wxString ds_path_s = tc_infile_path->GetValue();
+    if (ds_path_s.IsEmpty()) {
+        // Please select an input data source
+        return;
+    }
+    const char* ds_path_ref = ds_path_s.mb_str(wxConvUTF8);
+    char* ds_path = new char[strlen(ds_path_ref)];
+    ds_path = strcpy(ds_path, ds_path_ref);
+
+    std::vector<const char*> layer_names;
+    layer_names = OGRDataUtils::GetLayerNames((const char*)ds_path);
+    if (layer_names.empty()) {
+        // The input datasource has no layer, please try another datasource.
+        return;
+    }
+
+    int n_layers = layer_names.size();
+    wxString choices[n_layers];
+    for (size_t i=0; i<n_layers; i++)  {
+        choices[i] = layer_names[i];
+        delete layer_names[i];
+    }
+    wxString ttl = _("Layer names");
+    wxString prompt = _("Please select the layer name to connect:");
+    wxSingleChoiceDialog choiceDlg(NULL, prompt, ttl, n_layers,
+                                   (const wxString*)&choices);
+    if (choiceDlg.ShowModal() != wxID_OK) {
+        return;
+    }
+
+    std::vector<OGRFeature*> features;
+    int sel_idx = choiceDlg.GetSelection();
+    wxString sel_layer_name = choiceDlg.GetStringSelection();
+
+    OGRSpatialReference dest_sr;
+    dest_sr.importFromEPSG(4326); // use lat/lon
+
+    features = OGRDataUtils::GetFeatures((const char*)ds_path, sel_idx, &dest_sr);
+    if (features.empty()) {
+        // The selected input data source is empty, please try another data source.
+        return;
+    }
+
+    OGRGeometry *contour = OGRShapeUtils::GetMapOutline(features);
+    if (contour == NULL) {
+        // Can't get map contour from input data source. Please contact GeoDa administrator.
+        return;
+    }
+
+    wxString out_path = get_output_path();
+    OSMTools::RoadType road_type = get_road_type();
+    wxString osm_filter = tc_overpass->GetValue();
+    OGREnvelope* bbox = OGRShapeUtils::GetBBox(ds_path, sel_idx, &dest_sr);
+
+    OSMTools::Roads roads;
+    roads.DownloadByMapOutline(bbox, contour, road_type,
+                               osm_filter.mb_str(wxConvUTF8),
+                               out_path.mb_str(wxConvUTF8));
+
+    // clean-up memory before return
+    delete bbox;
+    delete contour;
+    for (size_t i=0; i<features.size(); ++i) {
+        delete features[i];
+    }
+}
+
+OSMTools::RoadType uiRoadDownload::get_road_type()
+{
+    OSMTools::RoadType road_type = OSMTools::drive;
+
+    if (ch_way_type->GetSelection() == 1) road_type = OSMTools::walk;
+    else if (ch_way_type->GetSelection() == 2) road_type = OSMTools::bike;
+
+    return road_type;
+}
+
+void uiRoadDownload::download_from_bbox()
 {
     double lat_min, lng_min, lat_max, lng_max;
     if (CheckInput(tc_bbox_right, lat_max) == false) return;
@@ -175,10 +310,7 @@ void uiRoadDownload::OnOKClick(wxCommandEvent& event)
     if (CheckInput(tc_bbox_up, lng_max) == false) return;
     if (CheckInput(tc_bbox_bottom, lng_min) == false) return;
 
-    OSMTools::RoadType road_type = OSMTools::drive;
-
-    if (ch_way_type->GetSelection() == 1) road_type = OSMTools::walk;
-    else if (ch_way_type->GetSelection() == 2) road_type = OSMTools::bike;
+    OSMTools::RoadType road_type = get_road_type();
 
     if (cb_buffer->IsChecked()) {
         long buffer_val;
@@ -210,9 +342,12 @@ void uiRoadDownload::OnOKClick(wxCommandEvent& event)
     wxString json_fpath = out_fname + ".json";
     wxString shp_fpath = out_fname + ".shp";
 
+    wxString osm_filter = tc_overpass->GetValue();
+
     OSMTools::Roads roads;
-    roads.DownloadByBoundingBox(lat_min, lng_min, lat_max, lng_max,
-            road_type, json_fpath.mb_str(wxConvUTF8));
+    roads.DownloadByBoundingBox(lat_min, lng_min, lat_max, lng_max, road_type,
+                                osm_filter.mb_str(wxConvUTF8),
+                                json_fpath.mb_str(wxConvUTF8));
     if (out_type.CmpNoCase("shp")==0) {
         roads.ReadOSMNodes(json_fpath);
         roads.SaveToShapefile(shp_fpath);
@@ -224,7 +359,4 @@ void uiRoadDownload::OnOKClick(wxCommandEvent& event)
     msg_dlg.ShowModal();
 }
 
-void uiRoadDownload::OnCancelClick(wxCommandEvent& event)
-{
-    Destroy();
-}
+

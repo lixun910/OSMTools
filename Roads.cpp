@@ -9,6 +9,8 @@
 #include <boost/algorithm/string.hpp>
 #include <ogrsf_frmts.h>
 
+#include "../OGRUtils/OGRDataUtils.h"
+#include "../OGRUtils/OGRShapeUtils.h"
 #include "Downloader.h"
 #include "Roads.h"
 
@@ -69,32 +71,6 @@ int Roads::GetNumEdges(std::vector<std::string>& nodes)
     return num_edges;
 }
 
-std::string Roads::GetOSMFilter(RoadType road_type)
-{
-    if (road_type == OSMTools::drive) {
-        return "way[\"highway\"][\"highway\"!~\"cycleway|bus_stop|elevator|footway|path|pedestrian|steps|track|proposed|construction|bridleway|abandoned|platform|raceway|service\"][\"motor_vehicle\"!~\"no\"][\"motorcar\"!~\"no\"][\"service\"!~\"parking|parking_aisle|driveway|emergency_access\"]";
-    } else if (road_type == OSMTools::walk) {
-        return "way[\"highway\"][\"highway\"!~\"motor|proposed|construction|abandoned|platform|raceway\"][\"foot\"!~\"no\"][\"service\"!~\"private\"]";
-
-    } else if (road_type == OSMTools::bike ) {
-        /*
-         [out:json][bbox:33.42624691286904,-111.98307260870936,33.455540239240435,-111.95513471961021];
-         (relation[type=route][route=bicycle];)->.result;
-         */
-        return "way[\"highway\"][\"highway\"!~\"footway|corridor|motor|proposed|construction|abandoned|platform|raceway\"][\"bicycle\"!~\"no\"][\"service\"!~\"private\"]";
-    } else if (road_type == OSMTools::transit) {
-        /*
-         [out:json][bbox:33.431173703367314,-111.99351352639498,33.44582077131526,-111.98149723000824];
-         ((
-         relation[type=route][route~"^(subway|monorail|aerialway|bus|trolleybus|ferry|train|tram)$"];
-         relation[type=public_transport][public_transport=stop_area];
-         );)->.result;
-         */
-        return "";
-    }
-    return "";
-}
-
 double Roads::ComputeArcDist(int from, int to)
 {
     double lat1 = lat_arr[from];
@@ -116,15 +92,21 @@ double Roads::ComputeArcDist(int from, int to)
     return 2 * EARTH_RADIUS * asin(sqrt(a+b));
 }
 
-bool Roads::DownloadByBoundingBox(double lat_min, double lng_min,
-        double lat_max, double lng_max,
-        OSMTools::RoadType road_type,  const char *file_name)
+const char* Roads::get_json_path(const char *shp_path)
 {
-    bool flag = false;
+    int sz = strlen(shp_path);
+    char* json_path = new char[sz+1];
+    json_path = strcpy(json_path, shp_path);
+    strcpy(&json_path[sz-3], "json");
+    return json_path;
+}
 
-    std::string osm_filter = GetOSMFilter(road_type);
-    if (osm_filter.empty()) return false;
-
+bool Roads::download_by_bbox(double lat_min, double lng_min,
+                            double lat_max, double lng_max,
+                            OSMTools::RoadType road_type,
+                            const char* osm_filter,
+                            const char *json_path)
+{
     std::ostringstream ss;
     ss << base_url << "?";
     ss << "data=[out:json][timeout:180];(";
@@ -134,9 +116,57 @@ bool Roads::DownloadByBoundingBox(double lat_min, double lng_min,
     ss << ";>;);out;";
 
     std::string url = ss.str();
-
     Downloader down;
-    flag = down.Get(url.c_str(), 0, file_name);
+    bool success = down.Get(url.c_str(), 0, json_path);
+    return success;
+}
+
+bool Roads::DownloadByBoundingBox(double lat_min, double lng_min,
+        double lat_max, double lng_max,
+        OSMTools::RoadType road_type,  const char* osm_filter,
+        const char *shp_path)
+{
+    bool flag = false;
+
+    if (strlen(osm_filter) == 0) return false;
+
+    const char* json_path = get_json_path(shp_path);
+
+    flag = download_by_bbox(lat_min, lng_min, lat_max, lng_max, road_type,
+                            osm_filter, json_path);
+    if (!flag) return false;
+
+    ReadOSMNodes(json_path);
+    SaveToShapefile(shp_path);
+
+    return flag;
+}
+
+bool Roads::DownloadByMapOutline(OGREnvelope* bbox, OGRGeometry *contour,
+                                 OSMTools::RoadType road_type,
+                                 const char *osm_filter, const char *shp_path)
+{
+    bool flag = false;
+
+    if (strlen(osm_filter) == 0) return false;
+
+    const char* json_path = get_json_path(shp_path);
+
+    double lat_min = bbox->MinY;
+    double lng_min = bbox->MinX;
+    double lat_max = bbox->MaxY;
+    double lng_max = bbox->MaxX;
+
+    flag = download_by_bbox(lat_min, lng_min, lat_max, lng_max, road_type,
+                            osm_filter, json_path);
+    if (!flag) return false;
+
+    ReadOSMNodes(json_path);
+    SaveToShapefile(shp_path, contour);
+
+    //std::vector<OGRFeature*> features = OGRDataUtils::GetFeatures(shp_path, 0);
+    //std::vector<OGRFeature*> results = OGRShapeUtils::GetFeaturesWithin(features, contour);
+    //OGRDataUtils::SaveFeatures(results, shp_path, "roads");
 
     return flag;
 }
@@ -383,7 +413,7 @@ void Roads::SaveEdgesToShapefile(const char *file_name)
     GDALClose( poDS );
 }
 
-void Roads::SaveToShapefile(const char *shp_file_name)
+void Roads::SaveToShapefile(const char *shp_file_name, OGRGeometry *contour)
 {
     const char *pszDriverName = "ESRI Shapefile";
     GDALDriver *poDriver;
@@ -399,8 +429,11 @@ void Roads::SaveToShapefile(const char *shp_file_name)
         printf( "Creation of output file failed.\n" );
         return;
     }
+    OGRSpatialReference dest_sr;
+    dest_sr.importFromEPSG(4326); // use lat/lon
+
     OGRLayer *poLayer;
-    poLayer = poDS->CreateLayer("roads", NULL, wkbLineString, NULL );
+    poLayer = poDS->CreateLayer("roads", &dest_sr, wkbLineString, NULL );
     if( poLayer == NULL ) {
         printf( "Layer creation failed.\n" );
         GDALClose( poDS );
@@ -424,6 +457,20 @@ void Roads::SaveToShapefile(const char *shp_file_name)
         return;
     }
     for (size_t i=0; i<ways.size(); ++i) {
+        OGRLineString line;
+        for (size_t j=0; j<ways[i].size(); ++j) {
+            std::string node_id = ways[i][j];
+            if (id_map.find(node_id) != id_map.end()) {
+                int idx = id_map[node_id];
+                OGRPoint pt;
+                pt.setX(lon_arr[idx]);
+                pt.setY(lat_arr[idx]);
+                line.addPoint(&pt);
+            }
+        }
+        if (contour) {
+            if (line.Within(contour) == false) continue;
+        }
         OGRFeature *poFeature;
         poFeature = OGRFeature::CreateFeature( poLayer->GetLayerDefn() );
         for (size_t c=0; c<6; ++c) {
@@ -435,18 +482,7 @@ void Roads::SaveToShapefile(const char *shp_file_name)
                 poFeature->SetField(c, val);
             }
         }
-        OGRLineString line;
 
-        for (size_t j=0; j<ways[i].size(); ++j) {
-            std::string node_id = ways[i][j];
-            if (id_map.find(node_id) != id_map.end()) {
-                int idx = id_map[node_id];
-                OGRPoint pt;
-                pt.setX(lon_arr[idx]);
-                pt.setY(lat_arr[idx]);
-                line.addPoint(&pt);
-            }
-        }
         poFeature->SetGeometry(&line);
         if( poLayer->CreateFeature( poFeature ) != OGRERR_NONE ) {
             printf( "Failed to create feature in shapefile.\n" );
