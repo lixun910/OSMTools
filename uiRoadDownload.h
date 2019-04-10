@@ -6,6 +6,7 @@
 #define OSMTOOLSPROJECT_UIROADDOWNLOAD_H
 
 #include <wx/wx.h>
+#include <wx/notebook.h>
 
 namespace OSMTools {
 
@@ -14,9 +15,9 @@ namespace OSMTools {
     public:
         uiRoadDownload(const wxString &title = _("Download OSM Roads"));
 
-        uiRoadDownload(double top, double bottom,
-                double left, double right,
-                const wxString &title = _("Download OSM Roads"));
+        uiRoadDownload(double top, double bottom, double left, double right,
+                       const wxString &cwd = wxGetCwd(),
+                       const wxString &title = _("Download OSM Roads"));
 
     protected:
         void InitControls();
@@ -28,18 +29,30 @@ namespace OSMTools {
         void OnCancelClick(wxCommandEvent& event);
 
         void OnRoadTypeChange(wxCommandEvent& event);
+        
+        void OnInputDSOptionCheck(wxCommandEvent& event);
+
+        void OnTabChange(wxCommandEvent& event);
 
         void OnOpenFile(wxCommandEvent& event);
 
-        void download_from_bbox();
+        bool use_bbox_of_ds(const char* ds_path, int sel_idx,
+                            OGRSpatialReference* dest_sr);
 
-        void download_from_input_ds();
+        bool use_outline_of_ds(const char* ds_path, int sel_idx,
+                               OGRSpatialReference* dest_sr);
+
+        bool download_from_bbox();
+
+        bool download_from_input_ds();
 
         wxString get_output_path();
 
         OSMTools::RoadType get_road_type();
-        
+
     protected:
+        wxString working_dir;
+
         wxNotebook *nb;
         wxTextCtrl *tc_bbox_up;
         wxTextCtrl *tc_bbox_left;
@@ -49,7 +62,7 @@ namespace OSMTools {
         wxBitmapButton *btn_open_file;
         wxRadioButton *rb_bbox;
         wxRadioButton *rb_outline;
-        wxRadioButton *rb_bbox_outline;
+        //wxRadioButton *rb_bbox_outline;
         wxCheckBox *cb_buffer;
         wxTextCtrl *tc_buffer;
         wxChoice *ch_way_type;

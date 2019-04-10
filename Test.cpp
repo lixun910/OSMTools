@@ -8,7 +8,6 @@
 
 #include "Test.h"
 #include "Roads.h"
-#include "TravelTool.h"
 #include "uiRoadDownload.h"
 
 using namespace OSMTools;
